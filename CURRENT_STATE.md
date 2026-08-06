@@ -1,8 +1,9 @@
 # Calcifer — Current State Reference
 
 This document describes everything in the project **as it exists right now**: the file
-structure, the UI, and the logic. It is the shared reference for the upcoming UI redesign
-(see `CALCIFER_UI_VISUAL_PROMPT.md` for the target design).
+structure, the UI, and the logic. It is the shared reference for the UI redesign work
+(see `CALCIFER_UI_VISUAL_PROMPT.md` and `CALCIFER_UI_GLASSMORPHISM_REHAUL_PROMPT.md`
+for the target design). The latest pass (glassmorphism rehaul) is reflected here.
 
 ---
 
@@ -85,7 +86,7 @@ voice conversation, vision, and tool routing, plus **OpenRouter** for heavy text
 ├── IMPLEMENTATION_PLAN.md    # 11-phase implementation plan.
 ├── CALCIFER_REDESIGN_AGENT_PROMPT.md   # Redesign brief (animation, emotion, rebrand).
 ├── CALCIFER_REDESIGN_COMPLETE.md       # Completed-implementation report.
-└── CALCIFER_UI_VISUAL_PROMPT.md        # THE target UI design brief (sidebar+chat+companion).
+└── CALCIFER_UI_GLASSMORPHISM_REHAUL_PROMPT.md  # Final visual rehaul brief (glass, depth, layout swap).
 ```
 
 ---
@@ -100,37 +101,46 @@ voice conversation, vision, and tool routing, plus **OpenRouter** for heavy text
 ### 3.2 Layout (what you see today)
 
 ```
-┌────────────┬─────────────────────────────┬──────────────────────────────┐
-│ Sidebar    │  Chat panel                 │  Companion area (largest)    │
-│ (210px,    │  - ChatView bubble          │  - CalciferFace (amber,      │
-│ collapsible│    transcript (auto-scroll) │    emotion-tinted)           │
-│ to icons)  │  - hero empty state (serif  │  - soft ambient radial glow  │
-│            │    "Calcifer")              │  - status line below face    │
-│ · identity │  - file chip (when attached)│  - mute pill under status    │
-│ · New chat │  - ChatInputBar: attach +   │                              │
-│ · conv list│    rounded input + Send     │                              │
-│ · clock    │                             │                              │
-│ · Settings │                             │                              │
-│ · collapse │                             │                              │
-└────────────┴─────────────────────────────┴──────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│ TopStrip (34px, full-width): ◆ CALCIFER wordmark + LIVE status LED        │
+├────────────┬──────────────────────────────────┬───────────────────────────┤
+│ Sidebar    │  Companion stage (CENTER)        │  Chat panel (RIGHT)       │
+│ (210px,    │  - largest region, primary focal │  - narrower glass panel   │
+│ collapsible│  point, glowing divider edges    │  - ChatView bubbles        │
+│ to icons)  │  - layered concentric glow +     │  - hero empty state        │
+│ · identity │    ambient rings                 │  - file chip               │
+│ · New chat │  - CalciferFace in glass housing │  - ChatInputBar (attach +  │
+│ · conv list│    (rim light, bloom, glossy     │    input + Send)           │
+│ · clock    │    eyes, per-emotion mouths)     │  - collapse toggle (›)     │
+│ · Settings │  - status line + mute pill       │  - chat panel collapses    │
+│ · collapse │  - face scales up with region    │    FIRST when window is    │
+│            │                                  │    narrow (auto)           │
+└────────────┴──────────────────────────────────┴───────────────────────────┘
 ```
 
-No header bar, no footer, no system monitor. Deep charcoal chrome (`#0a0a0c` base) with one
-warm amber accent (`#FFB347`) that the emotion system shifts on the companion glow.
+Glassmorphism material system: deep gradient base (`_BasePane`, warm ember bottom-left +
+cool top-right), three elevation tiers — base gradient → translucent glass panels
+(sidebar/chat, ~160 alpha fills + top edge light + glowing amber divider lines) → raised
+items (active conversation pill, send button, dialogs). Deepened jewel-tone accents
+(`#FFB020` amber, `#FF5E6E` coral, `#8B7CFF` violet, `#4FC6E8` teal, `#FF4B5C` red,
+`#FF8FB3` rose) on a deep charcoal base (`#0a0a0d`).
 
 ### 3.3 Widget inventory (ui.py)
 
 | Class | Role |
 |-------|------|
-| `MainWindow` | Owns the 3-region layout, conversation store + persistence, file attach, shortcuts (F4 mute, F11 fullscreen), setup overlay, settings. |
-| `Sidebar` | Collapsible nav: serif identity, "New chat", conversation list (select / double-click rename / right-click or hover-× delete), clock, Settings, collapse toggle. |
+| `MainWindow` | Owns the top-strip + 3-region layout (sidebar | companion center | chat right), conversation store + persistence, file attach, shortcuts (F4 mute, F11 fullscreen), setup overlay, settings, chat collapse toggle + auto-collapse-on-narrow. |
+| `TopStrip` | 34 px full-width glass wordmark strip: "◆ CALCIFER" + live state LED/readout (synced via `_apply_state`). |
+| `_BasePane` | Paints the deep gradient background (charcoal → ember bottom-left → cool top-right) behind all translucent glass panels. |
+| `Sidebar` | Collapsible glass nav: serif identity, gradient "New chat", conversation list (select / double-click rename / right-click or hover-× delete), clock, Settings, collapse toggle; translucent fill + top edge light + right glowing divider. |
 | `_ConvRow` | A single conversation row (title + meta) with hover delete button. |
-| `ChatView` | Scrollable bubble transcript with auto-scroll that respects manual scroll-up; hero empty state; 200-bubble render cap; accepts file drops. |
-| `ChatInputBar` | Attach (＋) button, rounded "Message Calcifer…" field, Send button that enables only with text. |
-| `CompanionArea` | Face + soft radial glow (colour eases over ~300 ms, gently pulses while speaking, dims when muted) + status line + mute pill. |
-| `CalciferFace` (calcifer_face.py) | Procedural face: 10 emotion modes, warm amber colour synced to the glow via `setColor()`, gaze drift + blink idle motion + gentle bob, speaking mouth. ~22 FPS. |
-| `SettingsDialog` | Shows the emotion colour palette and a "Reduced motion (lite mode)" toggle persisted to `config/settings.json`. |
-| `SetupOverlay` | First-run modal: Gemini key + OpenRouter key + OS picker → writes `config/api_keys.json`. |
+| `ChatView` | Glass bubble transcript with auto-scroll that respects manual scroll-up; hero empty state; 200-bubble render cap; accepts file drops. |
+| `ChatInputBar` | Glass attach (＋) button, rounded "Message Calcifer…" field, gradient Send button with soft amber glow that enables only with text. |
+| `_GlassPanel` | Glass chat-panel container: translucent fill + top edge light + left glowing divider; hosts header (collapse toggle ›), chat body, file chip. |
+| `CompanionArea` | Center stage: layered concentric glow (eases ~300 ms, pulses while speaking, dims when muted), faint ambient rings, edge rim light; status line + gradient mute pill; face scales up to fill the enlarged region. |
+| `CalciferFace` (calcifer_face.py) | Eilik-grade procedural glass face: glass housing bezel + rim light + bloom, glossy gradient eyes with highlights, per-emotion eye/mouth shapes, animated speaking mouth, crossfade between expressions (~230 ms), eased gaze/blink/bob idle motion. ~22 FPS. |
+| `SettingsDialog` | Frameless glass modal: emotion palette swatches (jewel tones) + "Reduced motion (lite mode)" toggle persisted to `config/settings.json`. |
+| `SetupOverlay` | First-run glass modal: Gemini key + OpenRouter key + OS picker → writes `config/api_keys.json`. |
 | `_RootShim` | Wraps QApplication so backend can call `mainloop()` / `protocol()`. |
 | `JarvisUI` | Public backend-facing API shim over MainWindow. |
 
@@ -189,11 +199,12 @@ User speaks → mic (16 kHz PCM) → Gemini Live (STT + reasoning)
 
 | Emotion family | Glow colour |
 |---|---|
-| happy / proud / playful | warm gold `#FFB347` |
-| excited / surprised | hot orange/pink `#FF6B6B` |
-| thinking / curious / focused | violet/blue `#7B68EE` |
-| calm / sleepy / sad | teal/indigo `#4A90D9` |
-| angry / annoyed / error | red `#FF4444` |
+| happy / proud / playful | deep warm gold `#FFB020` |
+| love | warm rose `#FF8FB3` |
+| excited / surprised | vivid coral `#FF5E6E` |
+| thinking / curious / focused | rich violet `#8B7CFF` |
+| calm / sleepy / sad | jewel teal `#4FC6E8` |
+| angry / annoyed / error | ember red `#FF4B5C` |
 
 ### 4.5 Face expression modes (CalciferFace)
 
@@ -223,18 +234,21 @@ Emotion → mode map lives in `calcifer_face.py:82`.
 
 | What | Where |
 |------|-------|
-| Emotion colour table | `ui.py:52` (`EMOTION_COLORS`) |
-| App chrome palette `class C` | `ui.py:90` (warm charcoal + amber) |
-| Conversation routing | `ui.py:100` (`_route_line`) |
-| Chat transcript view | `ui.py:132` (`ChatView`) |
-| Chat input bar | `ui.py:296` (`ChatInputBar`) |
-| Sidebar | `ui.py:390` (`Sidebar`), rows `_ConvRow` |
-| Companion stage | `ui.py:566` (`CompanionArea`) |
-| Settings dialog | `ui.py:700` (`SettingsDialog`) |
-| Setup overlay | `ui.py:770` (`SetupOverlay`) |
-| Main window + conversations | `ui.py:897` (`MainWindow`) |
-| Public API shim | `ui.py:1300` (`JarvisUI`) |
-| Face widget (active) | `calcifer_face.py` (amber, `setColor` + `setEmotion`) |
+| Emotion colour table | `ui.py:54` (`EMOTION_COLORS`) |
+| Deep glass chrome palette `class C` | `ui.py:78` |
+| Top strip | `ui.py:139` (`TopStrip`) |
+| Conversation routing | `ui.py:132` (`_route_line`) |
+| Chat transcript view | `ui.py:197` (`ChatView`) |
+| Chat input bar | `ui.py:390` (`ChatInputBar`) |
+| Sidebar | `ui.py:534` (`Sidebar`), rows `_ConvRow` at `ui.py:488` |
+| Companion stage | `ui.py:752` (`CompanionArea`) |
+| Settings dialog | `ui.py:920` (`SettingsDialog`) |
+| Setup overlay | `ui.py:1014` (`SetupOverlay`) |
+| Base gradient background | `ui.py:1169` (`_BasePane`) |
+| Glass chat panel | `ui.py:1205` (`_GlassPanel`) |
+| Main window + conversations | `ui.py:1238` (`MainWindow`) |
+| Public API shim | `ui.py:1707` (`JarvisUI`) |
+| Face widget (active) | `calcifer_face.py:34` (`CalciferFace`, `setColor` + `setEmotion` + `set_lite`) |
 | Face widget (legacy/unused) | `ui_face_avatar.py` |
 | Emotion parsing (backend) | `main.py:779-784` |
 | UI wiring (backend) | `main.py:505-515`, `main.py:893` |
@@ -243,18 +257,25 @@ Emotion → mode map lives in `calcifer_face.py:82`.
 
 ## 6. Design Gaps — Resolved in the UI Redesign
 
-| Target (`CALCIFER_UI_VISUAL_PROMPT.md`) | Status |
+| Target (`CALCIFER_UI_VISUAL_PROMPT.md` / glassmorphism rehaul) | Status |
 |--------|---------|
-| Sidebar: identity + new chat + conversation list + settings, collapsible to icons | ✅ Done |
-| Chat panel: full transcript, hero serif empty state, input with attach + send | ✅ Done |
-| Companion area = visual centrepiece | ✅ Largest region, calm glow stage |
-| Dark premium chrome, warm amber accent, serif hero type | ✅ Done (`C` palette + serif wordmark) |
-| Glow is the only emotion-shifting surface | ✅ Sidebar/chat chrome stays stable |
-| Mute near the face, small & quiet | ✅ Pill under the status line |
-| Eased colour transitions, gentle motion | ✅ Glow eases ~300 ms; face colour synced; idle bob + blink |
+| Sidebar: identity + new chat + conversation list + settings, collapsible to icons | ✅ Done (glass material, active amber pill) |
+| Chat panel: full transcript, hero serif empty state, input with attach + send | ✅ Done (now a narrower right-hand glass panel, collapsible) |
+| Companion area = visual centrepiece | ✅ Center region, largest, layered glow + rings |
+| Layout swap: sidebar → companion (center) → chat (right) | ✅ Done |
+| Real glassmorphism: translucency, layered elevation, edge light, glowing dividers | ✅ Done (3 elevation tiers, top edge highlights, amber divider lines) |
+| Base background has real depth (gradient, not flat hex) | ✅ Done (`_BasePane` ember/cool gradient) |
+| Deepened jewel-tone accents, gradients on all accent surfaces | ✅ Done (deeper `EMOTION_COLORS` + qlineargradient buttons/pills) |
+| Face redesigned, Eilik-grade (shape language, glossy eyes, per-emotion mouths) | ✅ Done (glass housing, rim light, bloom, crossfade) |
+| Chat panel restyled for its new supporting role | ✅ Done (compact glass bubbles, elevated user vs. AI) |
+| Futuristic detailing, restrained | ✅ Done (top strip, glowing dividers, corner notches, sparkles) |
+| Responsive: chat collapses first | ✅ Done (toggle + auto-collapse below `_CHAT_AUTO_COLLAPSE_W`) |
+| Glow is the only emotion-shifting surface | ✅ Sidebar/chat chrome stays stable; face colour synced |
+| Mute near the face, small & quiet | ✅ Gradient pill under the status line |
+| Eased colour transitions, gentle motion | ✅ Glow eases ~300 ms; crossfaded face expressions; eased gaze/blink/bob |
 | No system/resource-monitor surface | ✅ Removed (`_SysMetrics`, bars, HUD, badges) |
 | Conversation switching functional | ✅ Persisted, switchable, rename/delete |
-| Everything functional, not decorative | ✅ Verified offscreen (API + layout tests) |
+| Everything functional, not decorative | ✅ Verified offscreen (API + layout + face-mode + visual sanity) |
+| Reduced-motion (lite) still disables heavier motion | ✅ Slows glow easing, kills bloom/ring pulse, shortens face crossfade |
 
-**Remaining polish (out of scope for this pass):** crossfade between face expression clips
-(face currently switches modes instantly), and message fade/slide-in animation.
+**Remaining polish (out of scope for this pass):** message fade/slide-in animation.

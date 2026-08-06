@@ -10,15 +10,15 @@ import uuid
 from pathlib import Path
 
 from PyQt6.QtCore import (
-    QMimeData, Qt, QTimer, QUrl, pyqtSignal,
+    QMimeData, QPointF, QRectF, Qt, QTimer, QUrl, pyqtSignal,
 )
 from PyQt6.QtGui import (
     QColor, QDragEnterEvent, QDropEvent, QFont, QKeySequence,
-    QPainter, QBrush, QPen, QRadialGradient, QShortcut,
+    QLinearGradient, QPainter, QPen, QBrush, QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
-    QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QGraphicsDropShadowEffect,
+    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout,
     QWidget,
 )
@@ -37,10 +37,12 @@ CONV_FILE    = CONFIG_DIR / "conversations.json"
 SETTINGS_FILE= CONFIG_DIR / "settings.json"
 
 _DEFAULT_W, _DEFAULT_H = 1280, 780
-_MIN_W,     _MIN_H     = 980, 600
+_MIN_W,     _MIN_H     = 680, 560
 _SIDEBAR_W  = 210
 _SIDEBAR_W_MIN = 58
-_CHAT_MIN_W = 360
+_CHAT_MIN_W = 300
+_CHAT_RAIL_W = 44
+_CHAT_AUTO_COLLAPSE_W = 860
 
 _OS = platform.system()
 
@@ -50,43 +52,51 @@ _LITE = False  # reduced-motion mode (toggled in Settings)
 # Emotion -> colour mapping (drives the companion glow + face tint)
 # ---------------------------------------------------------------------------
 EMOTION_COLORS = {
-    "happy":     "#FFB347",  # Warm gold
-    "proud":     "#FFB347",
-    "playful":   "#FFB347",
-    "excited":   "#FF6B6B",  # Hot orange/pink
-    "surprised": "#FF6B6B",
-    "thinking":  "#9B7BFF",  # Violet/blue
-    "curious":   "#9B7BFF",
-    "focused":   "#9B7BFF",
-    "calm":      "#6FA8DC",  # Teal/indigo
-    "sleepy":    "#6FA8DC",
-    "sad":       "#6FA8DC",
-    "angry":     "#FF5F57",  # Red
-    "annoyed":   "#FF5F57",
-    "error":     "#FF5F57",
+    "happy":     "#FFB020",  # Deep warm gold
+    "proud":     "#FFB020",
+    "playful":   "#FFB020",
+    "love":      "#FF8FB3",  # Warm rose
+    "excited":   "#FF5E6E",  # Vivid coral / hot pink
+    "surprised": "#FF5E6E",
+    "thinking":  "#8B7CFF",  # Rich violet
+    "curious":   "#8B7CFF",
+    "focused":   "#8B7CFF",
+    "calm":      "#4FC6E8",  # Jewel teal
+    "sleepy":    "#4FC6E8",
+    "sad":       "#4FC6E8",
+    "angry":     "#FF4B5C",  # Ember red
+    "annoyed":   "#FF4B5C",
+    "error":     "#FF4B5C",
 }
 
 def get_emotion_color(emotion: str) -> QColor:
-    return QColor(EMOTION_COLORS.get(emotion.lower(), "#FFB347"))
+    return QColor(EMOTION_COLORS.get(emotion.lower(), "#FFB020"))
 
 # ---------------------------------------------------------------------------
-# Warm premium chrome palette
+# Deep glass chrome palette
 # ---------------------------------------------------------------------------
 class C:
-    BG        = "#0a0a0c"   # deep charcoal, slightly warm
-    CHROME    = "#0e0e11"   # sidebar / panels
-    PANEL     = "#131316"
-    PANEL2    = "#17171b"
-    BORDER    = "#232329"
-    BORDER_HI = "#33333b"
-    TEXT      = "#e9e7e4"
-    TEXT_MED  = "#b4b1ac"
-    TEXT_DIM  = "#797672"
-    ACC       = "#FFB347"   # warm amber accent
-    ACC_DIM   = "#7a551f"
-    GREEN     = "#63d390"
-    RED       = "#ff5f57"
-    WHITE     = "#f5f2ee"
+    BG         = "#0a0a0d"   # deep charcoal
+    CHROME     = "#101014"
+    PANEL      = "#15141a"
+    PANEL2     = "#1b1a21"
+    BORDER     = "#26252c"
+    BORDER_HI  = "#3a3942"
+    TEXT       = "#f2efe9"
+    TEXT_MED   = "#c3c0b9"
+    TEXT_DIM   = "#8f8b84"
+    ACC        = "#FFB020"
+    ACC_HI     = "#FFC554"
+    ACC_DIM    = "#8A5A14"
+    GREEN      = "#5BE3A6"
+    RED        = "#FF4B5C"
+    WHITE      = "#f8f5f0"
+
+    # glass material tokens
+    GLASS        = "rgba(255,255,255,0.04)"
+    GLASS_HI     = "rgba(255,255,255,0.07)"
+    GLASS_BORDER = "rgba(255,255,255,0.10)"
+    EDGE         = "rgba(255,255,255,0.18)"
 
 def qcol(h: str, a: int = 255) -> QColor:
     c = QColor(h); c.setAlpha(a); return c
@@ -96,6 +106,10 @@ def _sans(size=10, weight=QFont.Weight.Normal) -> QFont:
 
 def _serif(size=20, weight=QFont.Weight.Bold) -> QFont:
     f = QFont("Georgia", int(size)); f.setWeight(weight); return f
+
+def _acc_gradient():
+    return ("qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            " stop:0 #FFC554, stop:1 #F0A020)")
 
 # ---------------------------------------------------------------------------
 # Conversation helpers
@@ -120,6 +134,64 @@ def _fmt_size(size: int) -> str:
     else:                return f"{size/1024**3:.1f} GB"
 
 # ---------------------------------------------------------------------------
+# Top strip: full-width wordmark + status readout
+# ---------------------------------------------------------------------------
+class TopStrip(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(34)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(16, 2, 16, 2)
+        lay.setSpacing(8)
+
+        mark = QLabel("◆ CALCIFER")
+        mark.setFont(_serif(13))
+        mark.setStyleSheet(f"color: {C.ACC}; background: transparent;")
+        lay.addWidget(mark)
+
+        tag = QLabel("LIVE COMPANION")
+        tag.setFont(_sans(8, QFont.Weight.DemiBold))
+        tag.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(tag)
+
+        lay.addStretch(1)
+
+        self._led = QLabel("●")
+        self._led.setFont(_sans(11))
+        self._led.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(self._led)
+
+        self._status = QLabel("Initialising…")
+        self._status.setFont(_sans(9, QFont.Weight.DemiBold))
+        self._status.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        lay.addWidget(self._status)
+
+    def set_status(self, text: str, color: str):
+        self._status.setText(text)
+        self._status.setStyleSheet(f"color: {color}; background: transparent;")
+        self._led.setStyleSheet(f"color: {color}; background: transparent;")
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+
+        g = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        g.setColorAt(0.0, QColor(30, 28, 32, 120))
+        g.setColorAt(1.0, QColor(20, 19, 22, 150))
+        p.fillRect(r, QBrush(g))
+
+        # bottom divider with a subtle amber glow
+        d = QLinearGradient(r.left(), 0, r.right(), 0)
+        c0 = QColor(C.ACC); c0.setAlpha(16)
+        c1 = QColor(C.ACC); c1.setAlpha(70)
+        c2 = QColor(C.ACC); c2.setAlpha(16)
+        d.setColorAt(0.0, c0); d.setColorAt(0.5, c1); d.setColorAt(1.0, c2)
+        p.fillRect(QRectF(0, r.height() - 2, r.width(), 2), d)
+
+# ---------------------------------------------------------------------------
 # Chat transcript view
 # ---------------------------------------------------------------------------
 class ChatView(QScrollArea):
@@ -131,19 +203,21 @@ class ChatView(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAcceptDrops(True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("""
-            QScrollArea { background: transparent; }
-            QScrollBar:vertical { background: transparent; width: 8px; border: none; }
-            QScrollBar::handle:vertical { background: #2a2a30; border-radius: 4px; min-height: 24px; }
-            QScrollBar::handle:vertical:hover { background: #3a3a42; }
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { background: transparent; width: 6px; border: none; }
+            QScrollBar::handle:vertical { background: rgba(255,255,255,0.14); border-radius: 3px; min-height: 24px; }
+            QScrollBar::handle:vertical:hover { background: rgba(255,255,255,0.24); }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
 
         self._container = QWidget()
+        self._container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._container.setStyleSheet("background: transparent;")
         self._lay = QVBoxLayout(self._container)
-        self._lay.setContentsMargins(20, 20, 20, 16)
-        self._lay.setSpacing(10)
+        self._lay.setContentsMargins(16, 18, 16, 14)
+        self._lay.setSpacing(8)
         self._lay.addStretch(1)
         self.setWidget(self._container)
 
@@ -156,19 +230,38 @@ class ChatView(QScrollArea):
 
     def _build_empty(self) -> QWidget:
         w = QWidget()
+        w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         v = QVBoxLayout(w)
         v.addStretch(1)
+
+        glow = QFrame()
+        glow.setFixedSize(64, 64)
+        glow.setStyleSheet(
+            "background: qradialgradient(cx:0.5, cy:0.5, radius:0.6,"
+            " stop:0 rgba(255,176,32,0.30), stop:1 rgba(255,176,32,0.0));"
+            " border: none; border-radius: 32px;")
+        v.addWidget(glow, alignment=Qt.AlignmentFlag.AlignCenter)
+        v.addSpacing(6)
+
         title = QLabel("Calcifer")
-        title.setFont(_serif(36))
+        title.setFont(_serif(34))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(f"color: {C.ACC}; background: transparent;")
+        v.addWidget(title)
+
         sub = QLabel("Your fiery companion is ready when you are.")
-        sub.setFont(_sans(11))
+        sub.setFont(_sans(10.5))
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        v.addWidget(title)
-        v.addSpacing(10)
         v.addWidget(sub)
+        v.addSpacing(4)
+
+        hint = QLabel("Speak, type, or drop a file to begin.")
+        hint.setFont(_sans(8.5))
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        v.addWidget(hint)
+
         v.addStretch(1)
         return w
 
@@ -219,41 +312,45 @@ class ChatView(QScrollArea):
 
     def _make_bubble(self, role: str, text: str, ts: str) -> QWidget:
         outer = QWidget()
+        outer.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         h = QHBoxLayout(outer)
         h.setContentsMargins(0, 0, 0, 0)
 
         if role == "sys":
             lbl = QLabel(text)
-            lbl.setFont(_sans(9))
+            lbl.setFont(_sans(8.5))
             lbl.setWordWrap(True)
             lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-            lbl.setMaximumWidth(600)
+            lbl.setMaximumWidth(460)
             h.addStretch(1)
             h.addWidget(lbl)
             h.addStretch(1)
             return outer
 
         bubble = QFrame()
-        bubble.setMaximumWidth(560)
+        bubble.setMaximumWidth(480)
         if role == "you":
             bubble.setStyleSheet(
-                "QFrame { background: rgba(255,179,71,0.10);"
-                " border: 1px solid rgba(255,179,71,0.30); border-radius: 14px; }")
+                "QFrame { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                " stop:0 rgba(255,176,32,0.20), stop:1 rgba(255,176,32,0.09));"
+                " border: 1px solid rgba(255,176,32,0.40); border-radius: 12px; }")
         elif role == "err":
             bubble.setStyleSheet(
-                "QFrame { background: rgba(255,95,87,0.08);"
-                " border: 1px solid rgba(255,95,87,0.38); border-radius: 14px; }")
+                "QFrame { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                " stop:0 rgba(255,75,92,0.16), stop:1 rgba(255,75,92,0.07));"
+                " border: 1px solid rgba(255,75,92,0.45); border-radius: 12px; }")
         else:
             bubble.setStyleSheet(
-                "QFrame { background: #17171b;"
-                " border: 1px solid #24242a; border-radius: 14px; }")
+                "QFrame { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+                " stop:0 rgba(255,255,255,0.07), stop:1 rgba(255,255,255,0.03));"
+                " border: 1px solid rgba(255,255,255,0.11); border-radius: 12px; }")
 
         inner = QVBoxLayout(bubble)
-        inner.setContentsMargins(14, 10, 14, 8)
-        inner.setSpacing(3)
+        inner.setContentsMargins(12, 8, 12, 7)
+        inner.setSpacing(2)
 
         lbl = QLabel(text)
-        lbl.setFont(_sans(10.5))
+        lbl.setFont(_sans(10))
         lbl.setWordWrap(True)
         lbl.setTextFormat(Qt.TextFormat.PlainText)
         color = {"you": C.WHITE, "err": C.RED, "ai": C.TEXT}.get(role, C.TEXT)
@@ -262,7 +359,7 @@ class ChatView(QScrollArea):
 
         if ts:
             t = QLabel(ts)
-            t.setFont(_sans(7.5))
+            t.setFont(_sans(7))
             t.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
             align = (Qt.AlignmentFlag.AlignRight if role == "you"
                      else Qt.AlignmentFlag.AlignLeft)
@@ -297,12 +394,13 @@ class ChatInputBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(20, 6, 20, 18)
+        lay.setContentsMargins(16, 6, 16, 14)
         lay.setSpacing(8)
 
         self._attach = QPushButton("＋")
-        self._attach.setFixedSize(40, 40)
+        self._attach.setFixedSize(38, 38)
         self._attach.setToolTip("Attach a file")
         self._attach.setCursor(Qt.CursorShape.PointingHandCursor)
         self._attach.setFont(_sans(15, QFont.Weight.Bold))
@@ -312,25 +410,30 @@ class ChatInputBar(QWidget):
 
         self._input = QLineEdit()
         self._input.setPlaceholderText("Message Calcifer…")
-        self._input.setFont(_sans(10.5))
-        self._input.setFixedHeight(40)
+        self._input.setFont(_sans(10))
+        self._input.setFixedHeight(38)
         self._input.setStyleSheet("""
             QLineEdit {
-                background: #101013; color: #e9e7e4;
-                border: 1px solid #26262c; border-radius: 20px;
-                padding: 0 16px; selection-background-color: #3a2c18;
+                background: rgba(255,255,255,0.05); color: #f2efe9;
+                border: 1px solid rgba(255,255,255,0.12); border-radius: 19px;
+                padding: 0 14px; selection-background-color: rgba(255,176,32,0.35);
             }
-            QLineEdit:focus { border: 1px solid #7a551f; }
+            QLineEdit:focus { border: 1px solid rgba(255,176,32,0.65); }
         """)
         self._input.textChanged.connect(self._sync_send)
         self._input.returnPressed.connect(self._emit_send)
         lay.addWidget(self._input, 1)
 
         self._send = QPushButton("Send")
-        self._send.setFixedSize(72, 40)
+        self._send.setFixedSize(66, 38)
         self._send.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._send.setFont(_sans(10, QFont.Weight.Bold))
+        self._send.setFont(_sans(9.5, QFont.Weight.Bold))
         self._send.clicked.connect(self._emit_send)
+        self._send_glow = QGraphicsDropShadowEffect(self._send)
+        self._send_glow.setBlurRadius(18)
+        self._send_glow.setOffset(0, 0)
+        self._send_glow.setColor(QColor(255, 176, 32, 150))
+        self._send.setGraphicsEffect(self._send_glow)
         lay.addWidget(self._send)
         self._sync_send("")
 
@@ -338,31 +441,34 @@ class ChatInputBar(QWidget):
     def _ghost_btn():
         return """
             QPushButton {
-                background: #131316; color: #b4b1ac;
-                border: 1px solid #26262c; border-radius: 20px;
+                background: rgba(255,255,255,0.05); color: #c3c0b9;
+                border: 1px solid rgba(255,255,255,0.12); border-radius: 19px;
             }
             QPushButton:hover {
-                color: #FFB347; border: 1px solid #7a551f; background: #171711;
+                color: #FFB020; border: 1px solid rgba(255,176,32,0.55);
+                background: rgba(255,176,32,0.10);
             }
-            QPushButton:pressed { background: #1c1c12; }
+            QPushButton:pressed { background: rgba(255,176,32,0.18); }
         """
 
     def _sync_send(self, text: str):
         self._send.setEnabled(bool(text.strip()))
+        self._send_glow.setEnabled(bool(text.strip()))
         if text.strip():
-            self._send.setStyleSheet("""
-                QPushButton {
-                    background: #FFB347; color: #1a1206;
-                    border: none; border-radius: 20px; font-weight: bold;
-                }
-                QPushButton:hover { background: #ffc36b; }
-                QPushButton:pressed { background: #e39a2e; }
+            self._send.setStyleSheet(f"""
+                QPushButton {{
+                    background: {_acc_gradient()}; color: #1c1205;
+                    border: none; border-radius: 19px; font-weight: bold;
+                }}
+                QPushButton:hover {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                    stop:0 #FFD27A, stop:1 #F0A020); }}
+                QPushButton:pressed {{ background: #E09418; }}
             """)
         else:
             self._send.setStyleSheet("""
                 QPushButton {
-                    background: #18181d; color: #55524e;
-                    border: none; border-radius: 20px; font-weight: bold;
+                    background: rgba(255,255,255,0.05); color: #6d6a66;
+                    border: none; border-radius: 19px; font-weight: bold;
                 }
             """)
 
@@ -384,20 +490,21 @@ class _ConvRow(QWidget):
 
     def __init__(self, title: str, meta: str, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(54)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMinimumHeight(50)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 6, 8, 6)
+        lay.setContentsMargins(12, 5, 10, 5)
         lay.setSpacing(6)
 
         col = QVBoxLayout()
         col.setSpacing(2)
         self._title = QLabel(title)
         self._title.setFont(_sans(10, QFont.Weight.DemiBold))
-        self._title.setStyleSheet("color: #e9e7e4; background: transparent;")
+        self._title.setStyleSheet("color: #f2efe9; background: transparent;")
         col.addWidget(self._title)
         self._meta = QLabel(meta)
-        self._meta.setFont(_sans(8))
-        self._meta.setStyleSheet("color: #797672; background: transparent;")
+        self._meta.setFont(_sans(7.5))
+        self._meta.setStyleSheet("color: #8f8b84; background: transparent;")
         col.addWidget(self._meta)
         lay.addLayout(col, 1)
 
@@ -405,8 +512,8 @@ class _ConvRow(QWidget):
         self._x.setFixedSize(20, 20)
         self._x.setCursor(Qt.CursorShape.PointingHandCursor)
         self._x.setStyleSheet("""
-            QPushButton { background: transparent; color: #797672; border: none; }
-            QPushButton:hover { color: #ff5f57; }
+            QPushButton { background: transparent; color: #8f8b84; border: none; }
+            QPushButton:hover { color: #FF4B5C; }
         """)
         self._x.clicked.connect(self.delete_clicked.emit)
         self._x.hide()
@@ -435,12 +542,12 @@ class Sidebar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(_SIDEBAR_W)
-        self.setStyleSheet(f"background: {C.CHROME}; border-right: 1px solid {C.BORDER};")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._expanded = True
         self._id_to_item: dict[str, QListWidgetItem] = {}
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 16, 10, 12)
+        lay.setContentsMargins(12, 14, 12, 12)
         lay.setSpacing(8)
 
         # Identity
@@ -463,11 +570,16 @@ class Sidebar(QWidget):
         self._new_btn.setFont(_sans(10, QFont.Weight.Bold))
         self._new_btn.setStyleSheet("""
             QPushButton {
-                background: rgba(255,179,71,0.12); color: #FFB347;
-                border: 1px solid rgba(255,179,71,0.35); border-radius: 10px;
+                background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                    stop:0 rgba(255,176,32,0.22), stop:1 rgba(255,176,32,0.10));
+                color: #FFB020;
+                border: 1px solid rgba(255,176,32,0.45); border-radius: 10px;
             }
-            QPushButton:hover { background: rgba(255,179,71,0.20); }
-            QPushButton:pressed { background: rgba(255,179,71,0.28); }
+            QPushButton:hover {
+                background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                    stop:0 rgba(255,176,32,0.32), stop:1 rgba(255,176,32,0.16));
+            }
+            QPushButton:pressed { background: rgba(255,176,32,0.24); }
         """)
         self._new_btn.clicked.connect(self.new_chat_requested.emit)
         lay.addWidget(self._new_btn)
@@ -477,19 +589,25 @@ class Sidebar(QWidget):
         self._list = QListWidget()
         self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._list.setStyleSheet("""
             QListWidget { background: transparent; border: none; outline: 0; }
             QListWidget::item {
-                background: transparent; border: none; border-radius: 8px;
-                padding: 2px;
+                background: transparent; border: none; border-radius: 10px;
+                padding: 1px;
             }
-            QListWidget::item:hover { background: rgba(255,255,255,0.04); }
+            QListWidget::item:hover {
+                background: rgba(255,255,255,0.05);
+                border: 1px solid rgba(255,255,255,0.06);
+            }
             QListWidget::item:selected {
-                background: rgba(255,179,71,0.12);
-                border-left: 2px solid #FFB347;
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 rgba(255,176,32,0.26), stop:1 rgba(255,176,32,0.06));
+                border: 1px solid rgba(255,176,32,0.45);
+                border-left: 3px solid #FFB020;
             }
             QScrollBar:vertical { background: transparent; width: 6px; border: none; }
-            QScrollBar::handle:vertical { background: #2a2a30; border-radius: 3px; min-height: 20px; }
+            QScrollBar::handle:vertical { background: rgba(255,255,255,0.14); border-radius: 3px; min-height: 20px; }
         """)
         self._list.currentItemChanged.connect(self._on_current_changed)
         self._list.itemDoubleClicked.connect(self._on_double_clicked)
@@ -522,11 +640,40 @@ class Sidebar(QWidget):
     def _bottom_btn_style():
         return """
             QPushButton {
-                background: #131316; color: #b4b1ac;
-                border: 1px solid #232329; border-radius: 8px;
+                background: rgba(255,255,255,0.05); color: #c3c0b9;
+                border: 1px solid rgba(255,255,255,0.10); border-radius: 8px;
             }
-            QPushButton:hover { color: #FFB347; border: 1px solid #7a551f; }
+            QPushButton:hover {
+                color: #FFB020; border: 1px solid rgba(255,176,32,0.55);
+                background: rgba(255,176,32,0.10);
+            }
         """
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+
+        # Translucent glass fill
+        g = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        g.setColorAt(0.0, QColor(28, 26, 30, 150))
+        g.setColorAt(1.0, QColor(17, 16, 19, 160))
+        p.fillRect(r, QBrush(g))
+
+        # Top edge highlight (light catching the rim)
+        hi = QLinearGradient(r.left(), 0, r.right(), 0)
+        hi.setColorAt(0.0, QColor(255, 255, 255, 0))
+        hi.setColorAt(0.5, QColor(255, 255, 255, 42))
+        hi.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillRect(QRectF(0, 0, r.width(), 1), hi)
+
+        # Right glowing divider
+        d = QLinearGradient(0, r.top(), 0, r.bottom())
+        c0 = QColor(C.ACC); c0.setAlpha(18)
+        c1 = QColor(C.ACC); c1.setAlpha(95)
+        c2 = QColor(C.ACC); c2.setAlpha(18)
+        d.setColorAt(0.0, c0); d.setColorAt(0.5, c1); d.setColorAt(1.0, c2)
+        p.fillRect(QRectF(r.width() - 2, 0, 2, r.height()), d)
 
     def set_conversations(self, convs, active_id: str | None):
         self._list.blockSignals(True)
@@ -586,10 +733,11 @@ class Sidebar(QWidget):
         cid = self._item_id(item)
         menu = QMenu(self)
         menu.setStyleSheet(
-            "QMenu { background: #17171b; color: #e9e7e4; border: 1px solid #232329;"
-            " border-radius: 8px; padding: 4px; }"
+            "QMenu { background: rgba(24,23,27,235); color: #f2efe9;"
+            " border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;"
+            " padding: 4px; }"
             "QMenu::item { padding: 6px 18px; border-radius: 6px; }"
-            "QMenu::item:selected { background: rgba(255,179,71,0.15); }")
+            "QMenu::item:selected { background: rgba(255,176,32,0.18); }")
         act_rename = menu.addAction("Rename")
         act_delete = menu.addAction("Delete")
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
@@ -599,7 +747,7 @@ class Sidebar(QWidget):
             self.delete_requested.emit(cid)
 
 # ---------------------------------------------------------------------------
-# Companion area: face on soft ambient glow
+# Companion stage (center): layered glow + ambient rings behind the face
 # ---------------------------------------------------------------------------
 class CompanionArea(QWidget):
     mute_requested = pyqtSignal()
@@ -615,20 +763,25 @@ class CompanionArea(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(360, 420)
-        self._glow_color   = QColor("#FFB347")
-        self._target_color = QColor("#FFB347")
+        self.setMinimumSize(380, 420)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._glow_color   = QColor("#FFB020")
+        self._target_color = QColor("#FFB020")
         self._anim_progress = 1.0
         self._state = "INITIALISING"
+        self._muted = False
+        self._lite = False
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 30, 24, 26)
+        lay.setContentsMargins(24, 16, 24, 24)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        lay.addStretch(2)
+        lay.addStretch(1)
         self.face = CalciferFace()
+        self.face.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                QSizePolicy.Policy.Expanding)
         lay.addWidget(self.face, alignment=Qt.AlignmentFlag.AlignCenter)
-        lay.addSpacing(14)
+        lay.addSpacing(12)
 
         self._status = QLabel("Initialising…")
         self._status.setFont(_sans(11, QFont.Weight.DemiBold))
@@ -643,9 +796,8 @@ class CompanionArea(QWidget):
         self._mute_btn.setFont(_sans(8.5, QFont.Weight.DemiBold))
         self._mute_btn.clicked.connect(self.mute_requested.emit)
         lay.addWidget(self._mute_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-        lay.addStretch(3)
+        lay.addStretch(2)
 
-        self._muted = False
         self._style_mute(False)
 
         self._color_timer = QTimer(self)
@@ -667,28 +819,34 @@ class CompanionArea(QWidget):
         self._muted = muted
         self._style_mute(muted)
 
+    def set_lite(self, lite: bool):
+        self._lite = lite
+        self._color_timer.setInterval(60 if lite else 30)
+        self.face.set_lite(lite)
+
     def _style_mute(self, muted: bool):
         if muted:
             self._mute_btn.setText("MUTED")
             self._mute_btn.setStyleSheet("""
                 QPushButton {
-                    background: rgba(255,95,87,0.10); color: #ff5f57;
-                    border: 1px solid rgba(255,95,87,0.40); border-radius: 14px;
+                    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                        stop:0 rgba(255,75,92,0.22), stop:1 rgba(255,75,92,0.10));
+                    color: #FF4B5C;
+                    border: 1px solid rgba(255,75,92,0.50); border-radius: 14px;
                 }
-                QPushButton:hover { background: rgba(255,95,87,0.20); }
+                QPushButton:hover { background: rgba(255,75,92,0.22); }
             """)
         else:
             self._mute_btn.setText("MIC ON")
             self._mute_btn.setStyleSheet("""
                 QPushButton {
-                    background: rgba(99,211,144,0.10); color: #63d390;
-                    border: 1px solid rgba(99,211,144,0.35); border-radius: 14px;
+                    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                        stop:0 rgba(91,227,166,0.18), stop:1 rgba(91,227,166,0.08));
+                    color: #5BE3A6;
+                    border: 1px solid rgba(91,227,166,0.45); border-radius: 14px;
                 }
-                QPushButton:hover { background: rgba(99,211,144,0.20); }
+                QPushButton:hover { background: rgba(91,227,166,0.20); }
             """)
-
-    def set_lite(self, lite: bool):
-        self._color_timer.setInterval(60 if lite else 30)
 
     def _update_glow(self):
         if self._anim_progress < 1.0:
@@ -706,41 +864,67 @@ class CompanionArea(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), qcol(C.BG))
+        r = self.rect()
 
-        cx, cy = self.width() / 2, self.height() / 2
-        radius = min(self.width(), self.height()) * 0.62
+        # Stage base: slightly lighter, warm-centred gradient (reads distinct
+        # from the sidebar/chat glass at a glance).
+        base = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        base.setColorAt(0.0, QColor(18, 17, 20, 235))
+        base.setColorAt(0.5, QColor(21, 18, 20, 235))
+        base.setColorAt(1.0, QColor(14, 13, 16, 235))
+        p.fillRect(r, QBrush(base))
 
-        pulse = 1.25 if self._state == "SPEAKING" else (
-                1.10 if self._state in ("THINKING", "PROCESSING") else 1.0)
+        cx, cy = r.width() / 2, r.height() / 2
+        radius = min(r.width(), r.height()) * 0.60
+
+        pulse = 1.0
+        if not self._lite:
+            if self._state == "SPEAKING":
+                pulse = 1.22
+            elif self._state in ("THINKING", "PROCESSING"):
+                pulse = 1.10
         if self._muted:
             pulse *= 0.55
 
-        g = QRadialGradient(cx, cy, radius)
-        c = QColor(self._glow_color)
-        a0 = min(160, int(90 * pulse))
-        c.setAlpha(a0)
-        g.setColorAt(0.0, c)
-        c.setAlpha(int(40 * pulse))
-        g.setColorAt(0.55, c)
-        c.setAlpha(0)
-        g.setColorAt(1.0, c)
-        p.setBrush(QBrush(g))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRect(self.rect())
+        # Layered concentric glow (3 layers instead of one blob)
+        rc = QColor(self._glow_color)
+        for layer, (stop, alpha) in enumerate((
+                (0.0, 92), (0.45, 34), (0.75, 12))):
+            g = QRadialGradient(cx, cy, radius * pulse * (1.0 - layer * 0.18))
+            c = QColor(rc); c.setAlpha(int(alpha * pulse))
+            g.setColorAt(0.0, c)
+            c = QColor(rc); c.setAlpha(0)
+            g.setColorAt(1.0, c)
+            p.setBrush(QBrush(g))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRect(r)
+
+        # Faint ambient rings (subtle energy-field texture)
+        if not self._lite and not self._muted:
+            ring = QColor(rc); ring.setAlpha(22)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(ring, 1))
+            for i in (1, 2, 3):
+                rr = radius * (0.55 + i * 0.16) * pulse
+                p.drawEllipse(QRectF(cx - rr, cy - rr, rr * 2, rr * 2))
+
+        # Rim light along the stage edges
+        edge = QColor(rc); edge.setAlpha(30)
+        p.setPen(QPen(edge, 2))
+        p.drawLine(0, 0, r.width(), 0)
+        p.drawLine(0, r.height() - 1, r.width(), r.height() - 1)
 
 # ---------------------------------------------------------------------------
-# Settings dialog
+# Settings dialog (glass)
 # ---------------------------------------------------------------------------
 class SettingsDialog(QDialog):
     def __init__(self, lite: bool, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setFixedWidth(360)
-        self.setStyleSheet(f"""
-            QDialog {{ background: {C.PANEL}; border: 1px solid {C.BORDER}; }}
-            QLabel {{ color: {C.TEXT}; background: transparent; }}
-        """)
+        self.setFixedSize(380, 380)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(22, 20, 22, 20)
@@ -748,24 +932,29 @@ class SettingsDialog(QDialog):
 
         title = QLabel("Emotion palette")
         title.setFont(_sans(11, QFont.Weight.Bold))
+        title.setStyleSheet("color: #f2efe9; background: transparent;")
         v.addWidget(title)
 
         groups = [
-            ("Happy · Proud · Playful", "#FFB347"),
-            ("Excited · Surprised",     "#FF6B6B"),
-            ("Thinking · Curious · Focused", "#9B7BFF"),
-            ("Calm · Sleepy · Sad",     "#6FA8DC"),
-            ("Angry · Annoyed · Error", "#FF5F57"),
+            ("Happy · Proud · Playful", "#FFB020"),
+            ("Excited · Surprised",     "#FF5E6E"),
+            ("Thinking · Curious · Focused", "#8B7CFF"),
+            ("Calm · Sleepy · Sad",     "#4FC6E8"),
+            ("Angry · Annoyed · Error", "#FF4B5C"),
+            ("Love",                    "#FF8FB3"),
         ]
         for label, col in groups:
             row = QHBoxLayout()
             swatch = QFrame()
             swatch.setFixedSize(16, 16)
             swatch.setStyleSheet(
-                f"background: {col}; border-radius: 8px; border: none;")
+                f"background: qradialgradient(cx:0.5, cy:0.5, radius:0.6,"
+                f" stop:0 {col}, stop:1 {QColor(col).darker(150).name()});"
+                f" border-radius: 8px; border: none;")
             row.addWidget(swatch)
             lbl = QLabel(label)
             lbl.setFont(_sans(9.5))
+            lbl.setStyleSheet("color: #c3c0b9; background: transparent;")
             row.addWidget(lbl)
             row.addStretch(1)
             v.addLayout(row)
@@ -777,43 +966,58 @@ class SettingsDialog(QDialog):
         self._lite.setStyleSheet(
             "QCheckBox { color: #e9e7e4; }"
             "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;"
-            " border: 1px solid #33333b; background: #131316; }"
-            "QCheckBox::indicator:checked { background: #FFB347; border: 1px solid #FFB347; }")
+            " border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05); }"
+            "QCheckBox::indicator:checked { background: #FFB020; border: 1px solid #FFB020; }")
         v.addWidget(self._lite)
 
-        v.addSpacing(10)
+        v.addStretch(1)
+
         btn = QPushButton("Done")
         btn.setFixedHeight(34)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet("""
-            QPushButton {
-                background: #FFB347; color: #1a1206; border: none; border-radius: 10px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background: #ffc36b; }
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {_acc_gradient()}; color: #1c1205;
+                border: none; border-radius: 10px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                stop:0 #FFD27A, stop:1 #F0A020); }}
         """)
         btn.clicked.connect(self.accept)
         v.addWidget(btn)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        g = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        g.setColorAt(0.0, QColor(34, 32, 37, 245))
+        g.setColorAt(1.0, QColor(20, 19, 23, 245))
+        p.setBrush(QBrush(g))
+        p.setPen(QPen(QColor(255, 176, 32, 70), 1.5))
+        p.drawRoundedRect(r, 16, 16)
+        # top sheen
+        sh = QRectF(r.left() + 6, r.top() + 6, r.width() - 12, 26)
+        sg = QLinearGradient(0, sh.top(), 0, sh.bottom())
+        sg.setColorAt(0.0, QColor(255, 255, 255, 26))
+        sg.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setBrush(QBrush(sg))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(sh, 12, 12)
 
     def lite(self) -> bool:
         return self._lite.isChecked()
 
 # ---------------------------------------------------------------------------
-# Setup overlay (first run)
+# Setup overlay (glass, first run)
 # ---------------------------------------------------------------------------
 class SetupOverlay(QWidget):
     done = pyqtSignal(str, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            SetupOverlay {{
-                background: rgba(12, 12, 15, 245);
-                border: 1px solid {C.BORDER_HI};
-                border-radius: 12px;
-            }}
-        """)
 
         detected = {"darwin": "mac", "windows": "windows"}.get(_OS.lower(), "linux")
         self._sel_os = detected
@@ -834,7 +1038,7 @@ class SetupOverlay(QWidget):
         lay.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {C.BORDER};")
+        sep.setStyleSheet("color: rgba(255,255,255,0.10);")
         lay.addWidget(sep)
         lay.addSpacing(4)
 
@@ -845,7 +1049,7 @@ class SetupOverlay(QWidget):
         self._key_input.setPlaceholderText("AIza…")
         self._key_input.setFont(_sans(10))
         self._key_input.setFixedHeight(32)
-        self._key_input.setStyleSheet(self._input_style("#FFB347"))
+        self._key_input.setStyleSheet(self._input_style("#FFB020"))
         lay.addWidget(self._key_input)
         lay.addSpacing(8)
 
@@ -856,12 +1060,12 @@ class SetupOverlay(QWidget):
         self._or_input.setPlaceholderText("sk-or-…")
         self._or_input.setFont(_sans(10))
         self._or_input.setFixedHeight(32)
-        self._or_input.setStyleSheet(self._input_style("#FFB347"))
+        self._or_input.setStyleSheet(self._input_style("#FFB020"))
         lay.addWidget(self._or_input)
 
         lay.addSpacing(12)
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {C.BORDER};")
+        sep2.setStyleSheet("color: rgba(255,255,255,0.10);")
         lay.addWidget(sep2)
         lay.addSpacing(4)
 
@@ -889,29 +1093,42 @@ class SetupOverlay(QWidget):
         init_btn.setFont(_sans(10, QFont.Weight.Bold))
         init_btn.setFixedHeight(36)
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        init_btn.setStyleSheet("""
-            QPushButton {
-                background: #FFB347; color: #1a1206;
+        init_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {_acc_gradient()}; color: #1c1205;
                 border: none; border-radius: 10px; font-weight: bold;
-            }
-            QPushButton:hover { background: #ffc36b; }
+            }}
+            QPushButton:hover {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                stop:0 #FFD27A, stop:1 #F0A020); }}
         """)
         init_btn.clicked.connect(self._submit)
         lay.addWidget(init_btn)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        g = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        g.setColorAt(0.0, QColor(30, 28, 33, 244))
+        g.setColorAt(1.0, QColor(16, 15, 19, 244))
+        p.setBrush(QBrush(g))
+        p.setPen(QPen(QColor(255, 176, 32, 80), 1.5))
+        p.drawRoundedRect(r, 16, 16)
 
     @staticmethod
     def _input_style(accent: str):
         return f"""
             QLineEdit {{
-                background: #0d0d10; color: #e9e7e4;
-                border: 1px solid {C.BORDER}; border-radius: 8px; padding: 4px 10px;
+                background: rgba(255,255,255,0.05); color: #f2efe9;
+                border: 1px solid rgba(255,255,255,0.14); border-radius: 8px;
+                padding: 4px 10px;
             }}
             QLineEdit:focus {{ border: 1px solid {accent}; }}
         """
 
     def _sel(self, key: str):
         self._sel_os = key
-        colors = {"windows": "#FFB347", "mac": "#63d390", "linux": "#63d390"}
+        colors = {"windows": "#FFB020", "mac": "#5BE3A6", "linux": "#5BE3A6"}
         for k, btn in self._os_btns.items():
             if k == key:
                 btn.setStyleSheet(f"""
@@ -923,10 +1140,12 @@ class SetupOverlay(QWidget):
             else:
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: #101013; color: {C.TEXT_MED};
-                        border: 1px solid {C.BORDER}; border-radius: 8px;
+                        background: rgba(255,255,255,0.05); color: #c3c0b9;
+                        border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
                     }}
-                    QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_HI}; }}
+                    QPushButton:hover {{
+                        color: #f2efe9; border: 1px solid rgba(255,255,255,0.24);
+                    }}
                 """)
 
     def _submit(self):
@@ -943,6 +1162,75 @@ class SetupOverlay(QWidget):
                 " QLineEdit { border: 1px solid #ff5f57; }")
             return
         self.done.emit(key, or_key, self._sel_os)
+
+# ---------------------------------------------------------------------------
+# Base pane: rich gradient background behind everything
+# ---------------------------------------------------------------------------
+class _BasePane(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+
+        # Deep charcoal base with subtle colour movement
+        g = QLinearGradient(r.left(), r.top(), r.right(), r.bottom())
+        g.setColorAt(0.00, QColor("#121116"))
+        g.setColorAt(0.55, QColor("#0b0a0d"))
+        g.setColorAt(1.00, QColor("#070709"))
+        p.fillRect(r, QBrush(g))
+
+        # Warm ember tone bleeding in from the bottom-left
+        ember = QRadialGradient(r.left(), r.bottom(), max(r.width(), r.height()) * 0.75)
+        c = QColor("#3a1c08"); c.setAlpha(72)
+        ember.setColorAt(0.0, c)
+        c = QColor("#3a1c08"); c.setAlpha(0)
+        ember.setColorAt(1.0, c)
+        p.fillRect(r, ember)
+
+        # Cool near-black from the top-right
+        cool = QRadialGradient(r.right(), r.top(), max(r.width(), r.height()) * 0.85)
+        c = QColor("#101a2e"); c.setAlpha(64)
+        cool.setColorAt(0.0, c)
+        c = QColor("#101a2e"); c.setAlpha(0)
+        cool.setColorAt(1.0, c)
+        p.fillRect(r, cool)
+
+# ---------------------------------------------------------------------------
+# Glass chat panel (right side)
+# ---------------------------------------------------------------------------
+class _GlassPanel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+
+        g = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        g.setColorAt(0.0, QColor(22, 21, 25, 160))
+        g.setColorAt(1.0, QColor(13, 12, 15, 170))
+        p.fillRect(r, QBrush(g))
+
+        # Top edge highlight
+        hi = QLinearGradient(r.left(), 0, r.right(), 0)
+        hi.setColorAt(0.0, QColor(255, 255, 255, 0))
+        hi.setColorAt(0.5, QColor(255, 255, 255, 40))
+        hi.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillRect(QRectF(0, 0, r.width(), 1), hi)
+
+        # Left glowing divider
+        d = QLinearGradient(0, r.top(), 0, r.bottom())
+        c0 = QColor(C.ACC); c0.setAlpha(18)
+        c1 = QColor(C.ACC); c1.setAlpha(90)
+        c2 = QColor(C.ACC); c2.setAlpha(18)
+        d.setColorAt(0.0, c0); d.setColorAt(0.5, c1); d.setColorAt(1.0, c2)
+        p.fillRect(QRectF(0, 0, 2, r.height()), d)
 
 # ---------------------------------------------------------------------------
 # Main window
@@ -967,25 +1255,37 @@ class MainWindow(QMainWindow):
         self.on_text_command = None
         self._muted = False
         self._current_file: str | None = None
+        self._chat_collapsed = False
 
-        central = QWidget()
-        central.setStyleSheet(f"background: {C.BG};")
+        central = _BasePane()
         self.setCentralWidget(central)
 
-        root = QHBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Top strip: wordmark + live status (helps separate the three regions)
+        self._top = TopStrip()
+        outer.addWidget(self._top)
+
+        regions = QHBoxLayout()
+        regions.setContentsMargins(0, 0, 0, 0)
+        regions.setSpacing(0)
 
         self.sidebar = Sidebar()
-        root.addWidget(self.sidebar)
+        regions.addWidget(self.sidebar)
 
-        self.chat_panel = self._build_chat_panel()
-        root.addWidget(self.chat_panel, stretch=4)
-
+        # Companion stage = center, primary focal point, largest region
         self.companion = CompanionArea()
         self.companion.setSizePolicy(QSizePolicy.Policy.Expanding,
                                      QSizePolicy.Policy.Expanding)
-        root.addWidget(self.companion, stretch=5)
+        regions.addWidget(self.companion, stretch=5)
+
+        # Chat panel = right, narrower supporting panel
+        self.chat_panel = self._build_chat_panel()
+        regions.addWidget(self.chat_panel, stretch=3)
+
+        outer.addLayout(regions, 1)
 
         # --- conversations ---
         self._conversations: list[dict] = []
@@ -1137,24 +1437,61 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- chat
     def _build_chat_panel(self) -> QWidget:
-        w = QWidget()
+        w = _GlassPanel()
         w.setMinimumWidth(_CHAT_MIN_W)
-        w.setStyleSheet(f"background: {C.BG};")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        # Header: label + collapse toggle
+        header = QWidget()
+        header.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        header.setFixedHeight(42)
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(16, 0, 8, 0)
+        hl.setSpacing(8)
+        title = QLabel("CONVERSATION")
+        title.setFont(_sans(8.5, QFont.Weight.DemiBold))
+        title.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        hl.addWidget(title)
+        hl.addStretch(1)
+        self._chat_collapse_btn = QPushButton("›")
+        self._chat_collapse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._chat_collapse_btn.setFixedSize(26, 26)
+        self._chat_collapse_btn.setFont(_sans(11))
+        self._chat_collapse_btn.setToolTip("Collapse chat")
+        self._chat_collapse_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.05); color: #c3c0b9;
+                border: 1px solid rgba(255,255,255,0.10); border-radius: 8px;
+            }
+            QPushButton:hover {
+                color: #FFB020; border: 1px solid rgba(255,176,32,0.55);
+            }
+        """)
+        self._chat_collapse_btn.clicked.connect(self._toggle_chat)
+        hl.addWidget(self._chat_collapse_btn)
+        v.addWidget(header)
+
+        # Body (collapsed away by the toggle)
+        body = QWidget()
+        body.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(0)
 
         self.chat_view = ChatView()
-        lay.addWidget(self.chat_view, 1)
+        bl.addWidget(self.chat_view, 1)
 
         self.chat_bar = ChatInputBar()
-        lay.addWidget(self.chat_bar)
+        bl.addWidget(self.chat_bar)
 
         # file chip
         self._chip = QFrame()
-        self._chip.setStyleSheet(
-            "QFrame { background: #131316; border: 1px solid #232329;"
-            " border-radius: 10px; }")
+        self._chip.setStyleSheet("""
+            QFrame { background: rgba(255,255,255,0.05);
+                border: 1px solid rgba(255,176,32,0.35); border-radius: 10px; }
+        """)
         chip_lay = QHBoxLayout(self._chip)
         chip_lay.setContentsMargins(14, 4, 6, 4)
         chip_lay.setSpacing(8)
@@ -1167,13 +1504,31 @@ class MainWindow(QMainWindow):
         clear_btn.setFixedSize(22, 22)
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #797672; border: none; }"
-            "QPushButton:hover { color: #ff5f57; }")
+            "QPushButton { background: transparent; color: #8f8b84; border: none; }"
+            "QPushButton:hover { color: #FF4B5C; }")
         clear_btn.clicked.connect(self.chat_bar.clear_file_requested)
         chip_lay.addWidget(clear_btn)
         self._chip.hide()
-        lay.addWidget(self._chip)
+        bl.addWidget(self._chip)
+
+        v.addWidget(body, 1)
+        self._chat_body = body
         return w
+
+    def _toggle_chat(self):
+        self._chat_collapsed = not self._chat_collapsed
+        if self._chat_collapsed:
+            self.chat_panel.setMinimumWidth(_CHAT_RAIL_W)
+            self.chat_panel.setMaximumWidth(_CHAT_RAIL_W)
+            self._chat_body.hide()
+            self._chat_collapse_btn.setText("‹")
+            self._chat_collapse_btn.setToolTip("Expand chat")
+        else:
+            self.chat_panel.setMinimumWidth(_CHAT_MIN_W)
+            self.chat_panel.setMaximumWidth(16777215)
+            self._chat_body.show()
+            self._chat_collapse_btn.setText("›")
+            self._chat_collapse_btn.setToolTip("Collapse chat")
 
     def _send(self, txt: str):
         txt = txt.strip()
@@ -1223,7 +1578,9 @@ class MainWindow(QMainWindow):
 
     # ----------------------------------------------------------- companion
     def _apply_state(self, state: str):
+        text, color = CompanionArea.STATE_TEXT.get(state, (f"{state}…", C.TEXT_MED))
         self.companion.set_state(state)
+        self._top.set_status(text, color)
 
     def _apply_emotion(self, emotion: str):
         self.companion.set_emotion(emotion)
@@ -1293,7 +1650,7 @@ class MainWindow(QMainWindow):
 
     def _show_setup(self):
         ov = SetupOverlay(self.centralWidget())
-        ow, oh = 440, 470
+        ow, oh = 440, 480
         cw = self.centralWidget()
         ov.setGeometry(
             (cw.width()  - ow) // 2,
@@ -1307,13 +1664,16 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._overlay and self._overlay.isVisible():
-            ow, oh = 440, 470
+            ow, oh = 440, 480
             cw = self.centralWidget()
             self._overlay.setGeometry(
                 (cw.width()  - ow) // 2,
                 (cw.height() - oh) // 2,
                 ow, oh,
             )
+        # Responsive: chat panel is the first thing to collapse when narrow.
+        if self.width() < _CHAT_AUTO_COLLAPSE_W and not self._chat_collapsed:
+            self._toggle_chat()
 
     def _on_setup_done(self, key: str, or_key: str, os_name: str):
         os.makedirs(CONFIG_DIR, exist_ok=True)

@@ -177,14 +177,15 @@ class ChatView(QScrollArea):
         self._near_bottom = (sb.maximum() - value) < 60
 
     def clear(self):
-        while self._lay.count() > 1:
-            item = self._lay.takeAt(0)
+        # Keep the empty-state widget (index 0) and the trailing stretch.
+        # Remove and destroy only the message bubbles.
+        while self._lay.count() > 2:
+            item = self._lay.takeAt(1)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
         self._bubbles = []
         self._empty.show()
-        self._lay.insertWidget(0, self._empty, 1)
 
     def set_messages(self, messages):
         self.clear()

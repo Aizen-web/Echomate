@@ -59,11 +59,20 @@ class CalciferFace(QWidget):
         self.blink_duration_ms = 0
         self.next_blink_ms = 0
         
+        # Warm accent colour (default amber). Emotion changes can override.
+        self._face_color = QColor("#FFB347")
+        self.bob_y = 0.0
+        
         # Start animation
         self.reset_idle_state()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._animate)
         self._timer.start(45)  # ~22 FPS
+
+    def setColor(self, color: QColor):
+        """Recolour the face to match the current emotion glow (kept in sync by the UI)."""
+        self._face_color = QColor(color)
+        self.update()
     
     def reset_idle_state(self):
         """Reset to neutral idle pose"""
@@ -108,14 +117,18 @@ class CalciferFace(QWidget):
                 self.target_look_y = random.randint(-5, 6)
                 self.next_look_change_ms = now + random.randint(900, 2400)
             
-            self.look_x += (self.target_look_x - self.look_x) // 3
-            self.look_y += (self.target_look_y - self.look_y) // 3
+            # Smooth chase (eased, not integer stepping)
+            self.look_x += int(round((self.target_look_x - self.look_x) * 0.22))
+            self.look_y += int(round((self.target_look_y - self.look_y) * 0.22))
             
             # Blink
             if self.blink_start_ms == 0 and now >= self.next_blink_ms:
                 self.blink_start_ms = now
                 self.blink_duration_ms = random.randint(120, 240)
                 self.next_blink_ms = now + random.randint(2500, 7000)
+            
+            # Gentle idle bob so the character breathes
+            self.bob_y = math.sin(now * 0.0016) * 3.5
         
         self.update()
     
@@ -133,7 +146,7 @@ class CalciferFace(QWidget):
             eye_y_offset = self.frozen_look_y
         else:
             eye_x_offset = self.look_x
-            eye_y_offset = self.look_y
+            eye_y_offset = self.look_y + int(self.bob_y)
         
         # Calculate eye radii with cadence
         eye_ry_l = 66
@@ -178,7 +191,7 @@ class CalciferFace(QWidget):
         eye_ry_r = max(10, min(88, eye_ry_r))
         
         # Draw eyes based on mode
-        color = QColor("#00D4FF")  # Cyan
+        color = QColor(self._face_color)  # Warm accent, synced with emotion glow
         
         if self.emotion_mode == 1:  # happy
             self._draw_happy_eyes(painter, eye_x_offset, eye_y_offset, eye_ry_l, eye_ry_r, color)
@@ -238,7 +251,7 @@ class CalciferFace(QWidget):
         yc = base_y + look_y
         
         # Angry brows
-        brow_color = QColor("#A80000")
+        brow_color = QColor(self._face_color).darker(160)
         painter.setPen(QPen(brow_color, 3))
         painter.drawLine(40 + look_x, yc - 50, 85 + look_x, yc - 30)
         painter.drawLine(300 + look_x, yc - 50, 255 + look_x, yc - 30)
@@ -319,7 +332,7 @@ class CalciferFace(QWidget):
         
         mouth_x = 170 + look_x - mouth_w // 2
         
-        mouth_color = QColor("#00D4FF")
+        mouth_color = QColor(self._face_color)
         painter.setBrush(QBrush(mouth_color))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(mouth_x, mouth_y - mouth_h // 2, mouth_w, mouth_h)

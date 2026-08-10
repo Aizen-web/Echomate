@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from calcifer_face import CalciferFace
+from calcifer_blob import CalciferBlob
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -538,12 +538,22 @@ class Sidebar(QWidget):
     delete_requested       = pyqtSignal(str)
     settings_requested     = pyqtSignal()
     collapse_requested     = pyqtSignal()
+    task_toggle_requested  = pyqtSignal()
+
+    _TASK_STATUS_COLOR = {
+        "pending":   C.TEXT_DIM,
+        "running":   C.ACC,
+        "completed": C.GREEN,
+        "failed":    C.RED,
+        "cancelled": C.TEXT_DIM,
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(_SIDEBAR_W)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._expanded = True
+        self._tasks_open = False
         self._id_to_item: dict[str, QListWidgetItem] = {}
 
         lay = QVBoxLayout(self)
@@ -613,6 +623,25 @@ class Sidebar(QWidget):
         self._list.itemDoubleClicked.connect(self._on_double_clicked)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         lay.addWidget(self._list, 1)
+
+        # --- Background task activity feed (collapsed by default) ---
+        self._tasks_btn = QPushButton("▤  Tasks")
+        self._tasks_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._tasks_btn.setFixedHeight(32)
+        self._tasks_btn.setFont(_sans(9.5))
+        self._tasks_btn.setStyleSheet(self._bottom_btn_style())
+        self._tasks_btn.clicked.connect(self.task_toggle_requested.emit)
+        lay.addWidget(self._tasks_btn)
+
+        self._tasks_box = QFrame()
+        self._tasks_box.setStyleSheet(
+            "QFrame { background: rgba(255,255,255,0.04);"
+            " border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; }")
+        self._tasks_lay = QVBoxLayout(self._tasks_box)
+        self._tasks_lay.setContentsMargins(10, 8, 10, 8)
+        self._tasks_lay.setSpacing(5)
+        self._tasks_box.hide()
+        lay.addWidget(self._tasks_box)
 
         # Clock + bottom controls
         self._clock = QLabel("")
@@ -698,6 +727,55 @@ class Sidebar(QWidget):
     def set_clock(self, text: str):
         self._clock.setText(text)
 
+    def set_tasks(self, tasks: list[dict]):
+        """Refresh the background-task activity feed (sidebar section)."""
+        running = sum(1 for t in tasks if t.get("status") == "running")
+        total = len(tasks)
+        if running:
+            label = f"▤  Tasks ({running} running)"
+        elif total:
+            label = f"▤  Tasks ({total})"
+        else:
+            label = "▤  Tasks"
+        self._tasks_btn.setText(label)
+
+        # Rebuild the task list lazily.
+        while self._tasks_lay.count():
+            item = self._tasks_lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        if not tasks:
+            empty = QLabel("No background tasks yet.")
+            empty.setFont(_sans(8))
+            empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            self._tasks_lay.addWidget(empty)
+        else:
+            for t in tasks[-6:][::-1]:
+                row = self._make_task_row(t)
+                self._tasks_lay.addWidget(row)
+
+    @staticmethod
+    def _make_task_row(t: dict) -> QLabel:
+        status = t.get("status", "pending")
+        color = Sidebar._TASK_STATUS_COLOR.get(status, C.TEXT_DIM)
+        goal = t.get("goal", "")
+        if len(goal) > 34:
+            goal = goal[:33] + "…"
+        lbl = QLabel(f"● {goal}")
+        lbl.setFont(_sans(7.5))
+        lbl.setWordWrap(True)
+        lbl.setToolTip(status)
+        lbl.setStyleSheet(f"color: {color}; background: transparent;")
+        return lbl
+
+    def toggle_tasks(self):
+        self._tasks_open = not self._tasks_open
+        self._tasks_box.setVisible(self._tasks_open)
+        self._tasks_btn.setText(
+            "▤  Tasks" if not self._tasks_open else "▤  Tasks (hide)")
+
     def set_collapsed(self, collapsed: bool):
         self._expanded = not collapsed
         self.setFixedWidth(_SIDEBAR_W_MIN if collapsed else _SIDEBAR_W)
@@ -705,6 +783,8 @@ class Sidebar(QWidget):
         self._tagline.setVisible(not collapsed)
         self._list.setVisible(not collapsed)
         self._clock.setVisible(not collapsed)
+        self._tasks_btn.setVisible(not collapsed)
+        self._tasks_box.setVisible(not collapsed and self._tasks_open)
         self._new_btn.setText("＋" if collapsed else "＋  New chat")
         self._settings_btn.setText("⋮" if collapsed else "Settings")
         self._collapse_btn.setText("›" if collapsed else "‹")
@@ -765,22 +845,34 @@ class CompanionArea(QWidget):
         super().__init__(parent)
         self.setMinimumSize(380, 420)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._glow_color   = QColor("#FFB020")
-        self._target_color = QColor("#FFB020")
-        self._anim_progress = 1.0
         self._state = "INITIALISING"
         self._muted = False
-        self._lite = False
+        self._lite  = False
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 16, 24, 24)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        # Minimal glass clock, tucked into the top corner of the stage.
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.addStretch(1)
+        self._clock = QLabel("--:--")
+        self._clock.setFont(_sans(9, QFont.Weight.DemiBold))
+        self._clock.setStyleSheet(
+            "QLabel { color: rgba(255,255,255,0.55);"
+            " background: rgba(255,255,255,0.05);"
+            " border: 1px solid rgba(255,255,255,0.10); border-radius: 9px;"
+            " padding: 3px 10px; }")
+        top.addWidget(self._clock)
+        lay.addLayout(top)
+
         lay.addStretch(1)
-        self.face = CalciferFace()
-        self.face.setSizePolicy(QSizePolicy.Policy.Expanding,
+
+        self.blob = CalciferBlob()
+        self.blob.setSizePolicy(QSizePolicy.Policy.Expanding,
                                 QSizePolicy.Policy.Expanding)
-        lay.addWidget(self.face, alignment=Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.blob, alignment=Qt.AlignmentFlag.AlignCenter)
         lay.addSpacing(12)
 
         self._status = QLabel("Initialising…")
@@ -800,29 +892,32 @@ class CompanionArea(QWidget):
 
         self._style_mute(False)
 
-        self._color_timer = QTimer(self)
-        self._color_timer.timeout.connect(self._update_glow)
-        self._color_timer.start(30)
+        self._clock_timer = QTimer(self)
+        self._clock_timer.timeout.connect(self._tick_clock)
+        self._clock_timer.start(1000)
+        self._tick_clock()
+
+    def _tick_clock(self):
+        self._clock.setText(time.strftime("%H:%M:%S"))
 
     def set_emotion(self, emotion: str):
-        self._target_color = get_emotion_color(emotion)
-        self._anim_progress = 0.0
-        self.face.setEmotion(emotion)
+        self.blob.set_target_color(get_emotion_color(emotion))
 
     def set_state(self, state: str):
         self._state = state
         text, color = self.STATE_TEXT.get(state, (f"{state}…", C.TEXT_MED))
         self._status.setText(text)
         self._status.setStyleSheet(f"color: {color}; background: transparent;")
+        self.blob.set_state(state)
 
     def set_muted(self, muted: bool):
         self._muted = muted
         self._style_mute(muted)
+        self.blob.set_muted(muted)
 
     def set_lite(self, lite: bool):
         self._lite = lite
-        self._color_timer.setInterval(60 if lite else 30)
-        self.face.set_lite(lite)
+        self.blob.set_lite(lite)
 
     def _style_mute(self, muted: bool):
         if muted:
@@ -848,19 +943,6 @@ class CompanionArea(QWidget):
                 QPushButton:hover { background: rgba(91,227,166,0.20); }
             """)
 
-    def _update_glow(self):
-        if self._anim_progress < 1.0:
-            self._anim_progress += 0.05
-            if self._anim_progress > 1.0:
-                self._anim_progress = 1.0
-            t = self._anim_progress
-            r = int(self._glow_color.red()   * (1 - t) + self._target_color.red()   * t)
-            g = int(self._glow_color.green() * (1 - t) + self._target_color.green() * t)
-            b = int(self._glow_color.blue()  * (1 - t) + self._target_color.blue()  * t)
-            self._glow_color = QColor(r, g, b)
-            self.face.setColor(self._glow_color)
-            self.update()
-
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -874,42 +956,29 @@ class CompanionArea(QWidget):
         base.setColorAt(1.0, QColor(14, 13, 16, 235))
         p.fillRect(r, QBrush(base))
 
+        # The blob paints its own emotion-synced glow, so the stage itself
+        # only adds a faint, colour-synced ambient ring so the whole region
+        # reads as one light source without fighting the blob.
+        rc = self.blob.current_color()
         cx, cy = r.width() / 2, r.height() / 2
-        radius = min(r.width(), r.height()) * 0.60
-
+        radius = min(r.width(), r.height()) * 0.52
         pulse = 1.0
-        if not self._lite:
-            if self._state == "SPEAKING":
-                pulse = 1.22
-            elif self._state in ("THINKING", "PROCESSING"):
-                pulse = 1.10
+        if self._state == "SPEAKING" and not self._lite:
+            pulse = 1.12
         if self._muted:
-            pulse *= 0.55
+            pulse *= 0.6
 
-        # Layered concentric glow (3 layers instead of one blob)
-        rc = QColor(self._glow_color)
-        for layer, (stop, alpha) in enumerate((
-                (0.0, 92), (0.45, 34), (0.75, 12))):
-            g = QRadialGradient(cx, cy, radius * pulse * (1.0 - layer * 0.18))
-            c = QColor(rc); c.setAlpha(int(alpha * pulse))
-            g.setColorAt(0.0, c)
-            c = QColor(rc); c.setAlpha(0)
-            g.setColorAt(1.0, c)
-            p.setBrush(QBrush(g))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRect(r)
-
-        # Faint ambient rings (subtle energy-field texture)
-        if not self._lite and not self._muted:
-            ring = QColor(rc); ring.setAlpha(22)
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(ring, 1))
-            for i in (1, 2, 3):
-                rr = radius * (0.55 + i * 0.16) * pulse
-                p.drawEllipse(QRectF(cx - rr, cy - rr, rr * 2, rr * 2))
+        g = QRadialGradient(cx, cy, radius * pulse)
+        c = QColor(rc); c.setAlpha(int(34 * pulse))
+        g.setColorAt(0.0, c)
+        c = QColor(rc); c.setAlpha(0)
+        g.setColorAt(1.0, c)
+        p.setBrush(QBrush(g))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRect(r)
 
         # Rim light along the stage edges
-        edge = QColor(rc); edge.setAlpha(30)
+        edge = QColor(rc); edge.setAlpha(26)
         p.setPen(QPen(edge, 2))
         p.drawLine(0, 0, r.width(), 0)
         p.drawLine(0, r.height() - 1, r.width(), r.height() - 1)
@@ -1233,6 +1302,218 @@ class _GlassPanel(QWidget):
         p.fillRect(QRectF(0, 0, 2, r.height()), d)
 
 # ---------------------------------------------------------------------------
+# Quick-command palette (Ctrl+K): keyboard-triggerable launcher for common
+# tools. Selecting an item either runs it immediately or prompts for the one
+# missing argument, then sends it down the normal chat pipeline.
+# ---------------------------------------------------------------------------
+class CommandPalette(QWidget):
+    command_chosen  = pyqtSignal(str)
+    action_triggered = pyqtSignal(str)
+
+    # (label, chat template, argument hint, or None, and an optional local action id)
+    COMMANDS = [
+        ("Open an application",     "Open {arg}",   "Type an app name, e.g. Chrome",   None),
+        ("Search the web",          "Search the web for {arg}", "Type a search query",  None),
+        ("Check the weather",       "Check the weather in {arg}", "Type a city name",    None),
+        ("Set a reminder",          "Set a reminder: {arg}", "Describe the reminder",   None),
+        ("Play a YouTube video",    "Play the YouTube video {arg}", "Type a video title", None),
+        ("Send a message",          "Send a message to {arg}", "Type a contact name",    None),
+        ("Take a screenshot",       "Take a screenshot and analyze it", None,             None),
+        ("Manage files",            "Help me manage files: {arg}", "Describe the file task", None),
+        ("New chat",                None, None, "new_chat"),
+        ("Mute / unmute mic",       None, None, "toggle_mute"),
+        ("Open settings",           None, None, "settings"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedSize(460, 420)
+        self.hide()
+
+        self._arg_mode = False
+        self._pending = ""
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("What do you want Calcifer to do?")
+        self._input.setFont(_sans(10.5))
+        self._input.setFixedHeight(38)
+        self._input.setStyleSheet("""
+            QLineEdit { background: rgba(255,255,255,0.06); color: #f2efe9;
+                border: 1px solid rgba(255,176,32,0.45); border-radius: 10px;
+                padding: 0 12px; selection-background-color: rgba(255,176,32,0.35); }
+        """)
+        self._input.textChanged.connect(self._filter)
+
+        self._list = QListWidget()
+        self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._list.setFrameShape(QFrame.Shape.NoFrame)
+        self._list.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._list.setStyleSheet("""
+            QListWidget { background: transparent; border: none; outline: 0; }
+            QListWidget::item { padding: 8px 10px; border-radius: 8px; color: #c3c0b9; }
+            QListWidget::item:selected { background: rgba(255,176,32,0.18); color: #FFC554; }
+        """)
+        self._list.itemClicked.connect(lambda item: self._run_index(
+            item.data(Qt.ItemDataRole.UserRole)))
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(10)
+        title = QLabel("QUICK COMMANDS")
+        title.setFont(_sans(8, QFont.Weight.DemiBold))
+        title.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        v.addWidget(title)
+        v.addWidget(self._input)
+        v.addWidget(self._list, 1)
+        self._hint = QLabel("Esc to close")
+        self._hint.setFont(_sans(8))
+        self._hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        v.addWidget(self._hint)
+
+        self._refresh()
+        self.installEventFilter(self)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        g = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        g.setColorAt(0.0, QColor(30, 28, 33, 248))
+        g.setColorAt(1.0, QColor(17, 16, 20, 248))
+        p.setBrush(QBrush(g))
+        p.setPen(QPen(QColor(255, 176, 32, 70), 1.5))
+        p.drawRoundedRect(r, 16, 16)
+        sh = QRectF(r.left() + 6, r.top() + 6, r.width() - 12, 26)
+        sg = QLinearGradient(0, sh.top(), 0, sh.bottom())
+        sg.setColorAt(0.0, QColor(255, 255, 255, 22))
+        sg.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setBrush(QBrush(sg))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(sh, 12, 12)
+
+    def toggle(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self._arg_mode = False
+            self._input.clear()
+            self._input.setPlaceholderText("What do you want Calcifer to do?")
+            self._hint.setText("Esc to close")
+            self._refresh()
+            self.show()
+            self.raise_()
+            self._input.setFocus()
+
+    def _refresh(self):
+        self._list.blockSignals(True)
+        self._list.clear()
+        for i, (label, _tpl, _hint, _act) in enumerate(self.COMMANDS):
+            it = QListWidgetItem(label)
+            it.setData(Qt.ItemDataRole.UserRole, i)
+            self._list.addItem(it)
+        self._list.blockSignals(False)
+        if self._list.count():
+            self._list.setCurrentRow(0)
+
+    def _filter(self, text: str):
+        if self._arg_mode:
+            return
+        q = text.strip().lower()
+        self._list.blockSignals(True)
+        self._list.clear()
+        for i, (label, _tpl, _hint, _act) in enumerate(self.COMMANDS):
+            if q and q not in label.lower():
+                continue
+            it = QListWidgetItem(label)
+            it.setData(Qt.ItemDataRole.UserRole, i)
+            self._list.addItem(it)
+        self._list.blockSignals(False)
+        if self._list.count():
+            self._list.setCurrentRow(0)
+
+    def _run_index(self, index: int):
+        if index is None or index < 0 or index >= len(self.COMMANDS):
+            return
+        label, template, hint, action = self.COMMANDS[index]
+        if action:
+            self.action_triggered.emit(action)
+            self.hide()
+            return
+        if template and "{arg}" in template:
+            self._arg_mode = True
+            self._pending = template
+            self._input.setText("")
+            self._input.setPlaceholderText(hint or "Type a value…")
+            self._hint.setText("Enter to run · Esc to cancel")
+            self._list.clear()
+            self._input.setFocus()
+            return
+        self.command_chosen.emit(template)
+        self.hide()
+
+    def _commit(self):
+        if self._arg_mode:
+            arg = self._input.text().strip()
+            if not arg:
+                return
+            self.command_chosen.emit(self._pending.format(arg=arg))
+            self.hide()
+            return
+        it = self._list.currentItem()
+        if it is None and self._list.count():
+            self._list.setCurrentRow(0)
+            it = self._list.currentItem()
+        if it is not None:
+            self._run_index(it.data(Qt.ItemDataRole.UserRole))
+
+    def eventFilter(self, obj, event):
+        if event.type() == event.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Escape:
+                self.hide()
+                return True
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._commit()
+                return True
+            if key == Qt.Key.Key_Down and self._list.count():
+                row = self._list.currentRow()
+                self._list.setCurrentRow((row + 1) % self._list.count())
+                return True
+            if key == Qt.Key.Key_Up and self._list.count():
+                row = self._list.currentRow()
+                self._list.setCurrentRow((row - 1) % self._list.count())
+                return True
+        return super().eventFilter(obj, event)
+
+
+# ---------------------------------------------------------------------------
+# Glass notification toast: small, auto-dismissing, non-blocking.
+# ---------------------------------------------------------------------------
+class _Toast(QWidget):
+    def __init__(self, text: str, color: str, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedHeight(40)
+        self._label = QLabel(text, self)
+        self._label.setFont(_sans(9.5, QFont.Weight.DemiBold))
+        self._label.setStyleSheet(f"color: {color}; background: transparent;")
+        self._label.adjustSize()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        g = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        g.setColorAt(0.0, QColor(34, 32, 37, 242))
+        g.setColorAt(1.0, QColor(20, 19, 23, 242))
+        p.setBrush(QBrush(g))
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+        p.drawRoundedRect(r, 20, 20)
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -1303,6 +1584,7 @@ class MainWindow(QMainWindow):
         self.sidebar.delete_requested.connect(self._delete_conversation)
         self.sidebar.settings_requested.connect(self._open_settings)
         self.sidebar.collapse_requested.connect(self._toggle_sidebar)
+        self.sidebar.task_toggle_requested.connect(self._toggle_tasks)
         self.chat_bar.send_requested.connect(self._send)
         self.chat_bar.attach_requested.connect(self._attach_file)
         self.chat_bar.clear_file_requested.connect(self._clear_file)
@@ -1326,6 +1608,20 @@ class MainWindow(QMainWindow):
         # shortcuts
         QShortcut(QKeySequence("F4"), self).activated.connect(self._toggle_mute)
         QShortcut(QKeySequence("F11"), self).activated.connect(self._toggle_fullscreen)
+        QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._toggle_palette)
+
+        # quick-command palette overlay
+        self._palette = CommandPalette(self.centralWidget())
+        self._palette.command_chosen.connect(self._send)
+        self._palette.action_triggered.connect(self._palette_action)
+
+        # background-task monitoring (activity feed + toasts)
+        self._task_timer = QTimer(self)
+        self._task_timer.timeout.connect(self._poll_tasks)
+        self._task_timer.start(1000)
+        self._known_task_status: dict[str, str] = {}
+        self._toasts: list[_Toast] = []
+        self.sidebar.set_tasks([])
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -1603,6 +1899,80 @@ class MainWindow(QMainWindow):
     def _tick_clock(self):
         now = time.strftime("%H:%M")
         self.sidebar.set_clock(now)
+
+    # ---------------------------------------------------------- quick cmds
+    def _toggle_palette(self):
+        self._palette.toggle()
+        if self._palette.isVisible():
+            cw = self.centralWidget()
+            self._palette.move(
+                (cw.width()  - self._palette.width()) // 2,
+                (cw.height() - self._palette.height()) // 2,
+            )
+
+    def _palette_action(self, action: str):
+        if action == "new_chat":
+            self._new_chat()
+        elif action == "toggle_mute":
+            self._toggle_mute()
+        elif action == "settings":
+            self._open_settings()
+
+    # -------------------------------------------------------------- tasks
+    def _toggle_tasks(self):
+        self.sidebar.toggle_tasks()
+
+    def _poll_tasks(self):
+        try:
+            from agent.task_queue import get_queue
+            tasks = get_queue().get_all_statuses()
+        except Exception:
+            tasks = []
+
+        for t in tasks:
+            tid = t.get("task_id")
+            status = t.get("status", "pending")
+            prev = self._known_task_status.get(tid)
+            if status in ("completed", "failed", "cancelled"):
+                if prev not in ("completed", "failed", "cancelled"):
+                    self._toast_task(t)
+            self._known_task_status[tid] = status
+
+        self.sidebar.set_tasks(tasks)
+
+    def _toast_task(self, t: dict):
+        status = t.get("status", "")
+        goal = t.get("goal", "")
+        color = C.GREEN
+        text = "Finished:"
+        if status == "failed":
+            color = C.RED
+            text = "Failed:"
+        elif status == "cancelled":
+            color = C.TEXT_DIM
+            text = "Cancelled:"
+        msg = f"{text} {goal[:48]}"
+        self._show_toast(msg, color)
+
+    def _show_toast(self, text: str, color: str):
+        try:
+            toast = _Toast(text, color, self.centralWidget())
+            w = toast._label.width() + 40
+            cw = self.centralWidget()
+            toast.setFixedWidth(min(max(w, 220), 420))
+            toast._label.move(24, (toast.height() - toast._label.height()) // 2)
+            y = 44 + len(self._toasts) * 46
+            toast.move(cw.width() - toast.width() - 16, y)
+            toast.show()
+            self._toasts.append(toast)
+            QTimer.singleShot(3200, lambda: self._dismiss_toast(toast))
+        except Exception:
+            pass
+
+    def _dismiss_toast(self, toast: _Toast):
+        if toast in self._toasts:
+            self._toasts.remove(toast)
+        toast.deleteLater()
 
     # ------------------------------------------------------------ settings
     def _load_settings(self):

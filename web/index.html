@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calcifer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header id="topstrip">
+    <span class="wordmark">◆ CALCIFER</span>
+    <span class="tag">LIVE COMPANION</span>
+    <span class="spacer"></span>
+    <span id="state-led" class="led">●</span>
+    <span id="state-readout">Initialising…</span>
+  </header>
+
+  <div id="regions">
+
+    <!-- ======================= SIDEBAR ======================= -->
+    <aside id="sidebar">
+      <div class="side-top">
+        <div id="sb-identity" class="serif">Calcifer</div>
+        <div id="sb-tagline">Fire companion</div>
+        <button id="sb-new" class="btn btn-accent">＋&nbsp; New chat</button>
+      </div>
+
+      <div id="sb-convs"></div>
+
+      <div class="side-bottom">
+        <button id="sb-tasks" class="btn btn-ghost">▤&nbsp; Tasks</button>
+        <div id="sb-tasks-panel" class="tasks-panel hidden"></div>
+        <div id="sb-clock" class="clock-text">--:--</div>
+        <button id="sb-settings" class="btn btn-ghost">Settings</button>
+        <button id="sb-collapse" class="btn btn-ghost collapse">‹</button>
+      </div>
+    </aside>
+
+    <!-- ==================== COMPANION STAGE ==================== -->
+    <main id="stage">
+      <div id="stage-clock" class="glass-chip">--:--</div>
+
+      <div class="stage-center">
+        <div id="rings"></div>
+        <div id="glow" data-glow="yes"></div>
+        <div id="face" data-state="idle" data-expr="happy">
+          <div class="housing"></div>
+          <svg id="face-svg" viewBox="0 0 400 300" aria-label="Calcifer face">
+            <defs>
+              <radialGradient id="eyeGrad" cx="0.5" cy="0.32" r="0.85">
+                <stop offset="0%"  stop-color="#fff" style="stop-color: var(--feature-color); opacity: 0.95"/>
+                <stop offset="100%" stop-color="#000" style="stop-color: var(--feature-color); opacity: 0.55"/>
+              </radialGradient>
+              <radialGradient id="mouthGrad" cx="0.5" cy="0.4" r="0.9">
+                <stop offset="0%"  stop-color="#000" style="stop-color: var(--feature-color); opacity: 0.9"/>
+                <stop offset="100%" stop-color="#000" style="stop-color: var(--feature-color); opacity: 0.5"/>
+              </radialGradient>
+            </defs>
+            <g id="face-group">
+              <g id="eyes" fill="url(#eyeGrad)" stroke="rgba(255,255,255,0.25)" stroke-width="1.5">
+                <path id="eye-l" class="eye"/>
+                <path id="eye-r" class="eye"/>
+              </g>
+              <path id="mouth" fill="url(#mouthGrad)" stroke="rgba(255,255,255,0.20)" stroke-width="1.5"/>
+            </g>
+          </svg>
+        </div>
+      </div>
+
+      <div id="status-line">Initialising…</div>
+      <button id="mute-pill" class="pill pill-on">MIC ON</button>
+    </main>
+
+    <!-- ======================= CHAT PANEL ====================== -->
+    <section id="chat">
+      <div id="chat-header">
+        <span class="chat-title">CONVERSATION</span>
+        <button id="chat-collapse" class="rail-btn" title="Collapse chat">›</button>
+      </div>
+
+      <div id="chat-body">
+        <div id="chat-scroll">
+          <div id="chat-empty">
+            <div class="empty-glow"></div>
+            <div class="serif empty-title">Calcifer</div>
+            <div class="empty-sub">Your fiery companion is ready when you are.</div>
+            <div class="empty-hint">Speak, type, or drop a file to begin.</div>
+          </div>
+          <div id="chat-messages"></div>
+        </div>
+
+        <div id="file-chip" class="chip hidden">
+          <span id="chip-label"></span>
+          <button id="chip-clear" class="chip-clear">×</button>
+        </div>
+
+        <div id="chat-inputbar">
+          <button id="attach-btn" class="ghost-btn" title="Attach a file">＋</button>
+          <input id="chat-input" class="chat-input" placeholder="Message Calcifer…" autocomplete="off" spellcheck="false">
+          <button id="send-btn" class="send-btn" disabled>Send</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ======================= COMMAND PALETTE ====================== -->
+<div id="palette" class="overlay hidden">
+  <div class="palette-box glass-raised">
+    <div class="palette-title">QUICK COMMANDS</div>
+    <input id="palette-input" class="palette-input" placeholder="What do you want Calcifer to do?" autocomplete="off">
+    <div id="palette-list" class="palette-list"></div>
+    <div id="palette-hint" class="palette-hint">Esc to close</div>
+  </div>
+</div>
+
+<!-- ======================= SETTINGS MODAL ======================= -->
+<div id="settings" class="overlay hidden">
+  <div class="modal glass-raised">
+    <div class="modal-title">Settings</div>
+    <div class="settings-groups">
+      <div class="set-group-title">EMOTION PALETTE</div>
+      <div class="palette-swatches" id="palette-swatches"></div>
+    </div>
+    <label class="lite-row">
+      <input type="checkbox" id="lite-toggle">
+      <span>Reduced motion (lite mode)</span>
+    </label>
+    <button id="settings-done" class="send-btn wide">Done</button>
+  </div>
+</div>
+
+<!-- ======================= SETUP MODAL ========================== -->
+<div id="setup" class="overlay hidden">
+  <div class="modal glass-raised">
+    <div class="setup-title serif">Calcifer</div>
+    <div class="setup-sub">Configure your companion before first boot.</div>
+    <div class="rule"></div>
+
+    <div class="set-label">GEMINI API KEY</div>
+    <input id="setup-gemini" type="password" class="setup-input" placeholder="AIza…" autocomplete="off">
+    <div class="set-label">OPENROUTER API KEY</div>
+    <input id="setup-or" type="password" class="setup-input" placeholder="sk-or-…" autocomplete="off">
+
+    <div class="rule"></div>
+    <div class="set-label">OPERATING SYSTEM</div>
+    <div class="os-row" id="os-row"></div>
+
+    <button id="setup-submit" class="send-btn wide">Initialise Systems</button>
+  </div>
+</div>
+
+<!-- ======================= TOASTS ================================ -->
+<div id="toasts"></div>
+
+<script src="qwebchannel.js"></script>
+<script src="face.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

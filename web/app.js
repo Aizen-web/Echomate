@@ -65,22 +65,18 @@
 
   function setState(state) {
     var entry = STATE_TEXT[state] || [state + "…", "#c3c0b9"];
-    $("state-readout").textContent = entry[0];
-    $("state-led").style.color = entry[1];
     $("status-line").textContent = entry[0];
     $("status-line").style.color = entry[1];
+    $("state-led").style.color = entry[1];
     if (window.CalciferFace) CalciferFace.setState(STATE_FACE[state] || "idle");
   }
 
   function setMuted(m) {
-    var pill = $("mute-pill");
-    if (m) {
-      pill.textContent = "MUTED";
-      pill.className = "pill pill-off";
-    } else {
-      pill.textContent = "MIC ON";
-      pill.className = "pill pill-on";
-    }
+    var btn = $("mute-pill");
+    var icon = $("mute-icon");
+    btn.classList.toggle("muted", !!m);
+    btn.title = m ? "Unmute" : "Mute";
+    if (icon) icon.textContent = m ? "mic_off" : "mic";
     if (window.CalciferFace) CalciferFace.setMuted(m);
   }
 
@@ -246,11 +242,11 @@
 
   function renderTasks(tasks) {
     var running = tasks.filter(function (t) { return t.status === "running"; }).length;
-    var btn = $("sb-tasks");
-    var label = "▤  Tasks";
-    if (running) label = "▤  Tasks (" + running + " running)";
-    else if (tasks.length) label = "▤  Tasks (" + tasks.length + ")";
-    btn.innerHTML = label.replace(/ /g, "&nbsp;");
+    var label = "Tasks";
+    if (running) label = "Tasks (" + running + " running)";
+    else if (tasks.length) label = "Tasks (" + tasks.length + ")";
+    var labelEl = $("sb-tasks").querySelector(".nav-label");
+    if (labelEl) labelEl.textContent = label;
 
     var panel = $("sb-tasks-panel");
     if (panel.classList.contains("hidden")) return;
@@ -462,7 +458,8 @@
   function setChatCollapsed(c) {
     chatCollapsed = c;
     $("chat").classList.toggle("collapsed", c);
-    $("chat-collapse").textContent = c ? "‹" : "›";
+    var icon = $("chat-collapse").querySelector(".material-symbols-outlined");
+    if (icon) icon.textContent = c ? "chevron_left" : "chevron_right";
   }
   function onResize() {
     if (window.innerWidth < 860 && !chatCollapsed) setChatCollapsed(true);
@@ -503,7 +500,7 @@
     document.getElementById("sb-new").addEventListener("click", function () { bridge.newChat(); });
     document.getElementById("sb-settings").addEventListener("click", function () { bridge.openSettings(); });
     document.getElementById("sb-collapse").addEventListener("click", function () {
-      $("sidebar").classList.toggle("collapsed");
+      document.body.classList.toggle("side-collapsed");
     });
     document.getElementById("sb-tasks").addEventListener("click", function () {
       $("sb-tasks-panel").classList.toggle("hidden");

@@ -1,8 +1,21 @@
 # Web UI Migration — Status Report
 
-Date: 2026-08-10
+Date: 2026-08-10 (updated 2026-08-11)
 
 Status of the `CALCIFER_WEB_UI_MIGRATION_PROMPT.md` migration: the native PyQt6 widget UI has been fully replaced with an embedded web frontend (`QWebEngineView` + `QWebChannel` bridge). The Python backend (`main.py`, `agent/*`, `actions/*`, `memory/*`, `or_client.py`) is untouched.
+
+## UI v2 Integration (`web/Ui2.html` design pass)
+
+The design mockup `web/Ui2.html` has been merged into the live frontend:
+
+- **New look**: Tailwind-styled layout — left navigation sidebar (Companion / Memories / Nexus / Archive / Settings), centered companion stage with a WebGL background shader + Three.js energy-field housing (both guarded: if WebGL is unavailable the CSS housing ring and gradient fallback render instead), right chat panel ("Current Thread").
+- **Vendored all CDN assets** (remote URLs are blocked in the embedded WebEngine): `vendor/tailwind.js`, `vendor/three.min.js`, `vendor/fonts.css`, `vendor/msymbols.css`, `vendor/fonts/*.woff2`.
+- **Face centring fixed** (the requested regression): the housing ring, glow, and face all share the same centre (`#housing-ring`/`#glow`/`#face` are absolutely positioned on `left/top 50%` + `translate(-50%,-50%)` inside `.stage-center`, sized from a single `--housing` variable).
+- **Face layout bug fixed in `face.js`**: `eyePath`/`mouthPath` treated the per-expression `cx` as an absolute viewBox X instead of an offset from centre (so eyes rendered at x≈0-80, hard left) and the mouth had no baseline offset (it rendered ABOVE the eyes). Eyes are now symmetric around x=200 and the mouth sits on a fixed baseline (y176) below the eyes.
+- **Colour system preserved**: the `@property`-registered `--glow-color` / `--face-color` / `--feature-color` variables still transition on `.3s` (verified by sampling intermediate values), and the independent `#glow` layer still tints from the same eased colour.
+- **Expressions preserved**: the parametric `face.js` engine (9 presets, blink, gaze drift, speaking ripple) drives the new centred face unchanged.
+- **app.js adapted**: no topstrip readout (status pill on stage), icon-based mute button (`mic` / `mic_off` + `.muted`), sidebar collapse via `body.side-collapsed`, chat collapse via chevron icons, tasks button uses a `.nav-label` span.
+- All 54 headless bridge checks still pass; fonts (Sora, Hanken Grotesk, Noto Serif, JetBrains Mono, Material Symbols) load from local files; preview saved at `preview_ui2.png`.
 
 ## What Has Been Done
 

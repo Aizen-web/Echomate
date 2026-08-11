@@ -29,7 +29,8 @@
   };
 
   /* Eye geometry params (see eyePath for meaning).
-     cx, cy = centre offset from face centre (viewBox 400x300, centre ~200,150)
+     cx     = horizontal offset from FACE_CX (200)
+     cy     = absolute vertical centre (viewBox 400x300)
      w      = half width          up = upper lid arch (+ raised)
      h      = vertical extent     dn = lower lid depth
      tilt   = degrees of rotation */
@@ -115,15 +116,25 @@
     ];
     for (var i = 0; i < pts.length; i++) {
       var r = rotate(pts[i], e.tilt);
-      pts[i] = [r[0] + e.cx, r[1] + e.cy];
+      pts[i] = [r[0] + FACE_CX + e.cx, r[1] + e.cy];
     }
     return closedPath(pts);
   }
 
+  /* Face centre in the viewBox — cx values in EXPRESSIONS are offsets
+     from this centre, so they must be added to it, not used as-is. */
+  var FACE_CX = 200;
+
+  /* Mouth sits on a fixed baseline below the eyes (viewBox 400x300,
+     eyes ~y96-133, mouth baseline at y176 keeps it clear of them). */
+  var MOUTH_Y = 176;
+
   function mouthPath(m) {
     var pts = [
-      [-m.w, -m.cup], [0, m.cup], [m.w, -m.cup],
-      [m.w * 0.55, m.h * 0.6], [0, m.h], [-m.w * 0.55, m.h * 0.6]
+      [FACE_CX - m.w, MOUTH_Y - m.cup], [FACE_CX, MOUTH_Y + m.cup],
+      [FACE_CX + m.w, MOUTH_Y - m.cup],
+      [FACE_CX + m.w * 0.55, MOUTH_Y + m.h * 0.6], [FACE_CX, MOUTH_Y + m.h],
+      [FACE_CX - m.w * 0.55, MOUTH_Y + m.h * 0.6]
     ];
     return closedPath(pts);
   }

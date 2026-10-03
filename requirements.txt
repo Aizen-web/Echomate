@@ -21,3 +21,4 @@ youtube-transcript-api
 pywinauto
 pyaudio
 PyQt6
+PyQt6-WebEngine

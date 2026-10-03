@@ -30,37 +30,37 @@
 
   /* Eye geometry params (see eyePath for meaning).
      cx     = horizontal offset from FACE_CX (200)
-     cy     = absolute vertical centre (viewBox 400x300)
+     cy     = absolute vertical centre (viewBox 400x400)
      w      = half width          up = upper lid arch (+ raised)
      h      = vertical extent     dn = lower lid depth
      tilt   = degrees of rotation */
   var EXPRESSIONS = {
-    happy:     { eyeL: {cx:-46, cy:96, w:34, h:20, up:17, dn:-1, tilt:-2},
-                 eyeR: {cx: 46, cy:96, w:34, h:20, up:17, dn:-1, tilt: 2},
+    happy:     { eyeL: {cx:-46, cy:146, w:34, h:20, up:17, dn:-1, tilt:-2},
+                 eyeR: {cx: 46, cy:146, w:34, h:20, up:17, dn:-1, tilt: 2},
                  mouth:{w:46, cup:13, h:5} },
-    love:      { eyeL: {cx:-44, cy:98, w:30, h:14, up:19, dn:3,  tilt:-4},
-                 eyeR: {cx: 44, cy:98, w:30, h:14, up:19, dn:3,  tilt: 4},
+    love:      { eyeL: {cx:-44, cy:148, w:30, h:14, up:19, dn:3,  tilt:-4},
+                 eyeR: {cx: 44, cy:148, w:30, h:14, up:19, dn:3,  tilt: 4},
                  mouth:{w:34, cup:9, h:4} },
-    surprised: { eyeL: {cx:-46, cy:90, w:42, h:34, up:6,  dn:6,  tilt: 0},
-                 eyeR: {cx: 46, cy:90, w:42, h:34, up:6,  dn:6,  tilt: 0},
+    surprised: { eyeL: {cx:-46, cy:140, w:42, h:34, up:6,  dn:6,  tilt: 0},
+                 eyeR: {cx: 46, cy:140, w:42, h:34, up:6,  dn:6,  tilt: 0},
                  mouth:{w:30, cup:2, h:27} },
-    excited:   { eyeL: {cx:-46, cy:92, w:40, h:30, up:10, dn:4,  tilt:-3},
-                 eyeR: {cx: 46, cy:92, w:40, h:30, up:10, dn:4,  tilt: 3},
+    excited:   { eyeL: {cx:-46, cy:142, w:40, h:30, up:10, dn:4,  tilt:-3},
+                 eyeR: {cx: 46, cy:142, w:40, h:30, up:10, dn:4,  tilt: 3},
                  mouth:{w:40, cup:7, h:20} },
-    thinking:  { eyeL: {cx:-44, cy:82, w:30, h:14, up:6,  dn:2,  tilt: 0},
-                 eyeR: {cx: 44, cy:86, w:34, h:18, up:10, dn:4,  tilt: 0},
+    thinking:  { eyeL: {cx:-44, cy:132, w:30, h:14, up:6,  dn:2,  tilt: 0},
+                 eyeR: {cx: 44, cy:136, w:34, h:18, up:10, dn:4,  tilt: 0},
                  mouth:{w:22, cup:2, h:4} },
-    calm:      { eyeL: {cx:-46, cy:96, w:32, h:18, up:8,  dn:2,  tilt: 0},
-                 eyeR: {cx: 46, cy:96, w:32, h:18, up:8,  dn:2,  tilt: 0},
+    calm:      { eyeL: {cx:-46, cy:146, w:32, h:18, up:8,  dn:2,  tilt: 0},
+                 eyeR: {cx: 46, cy:146, w:32, h:18, up:8,  dn:2,  tilt: 0},
                  mouth:{w:34, cup:3, h:3} },
-    sleepy:    { eyeL: {cx:-46, cy:100,w:26, h:7,  up:-2, dn:-2, tilt: 0},
-                 eyeR: {cx: 46, cy:100,w:26, h:7,  up:-2, dn:-2, tilt: 0},
+    sleepy:    { eyeL: {cx:-46, cy:150,w:26, h:7,  up:-2, dn:-2, tilt: 0},
+                 eyeR: {cx: 46, cy:150,w:26, h:7,  up:-2, dn:-2, tilt: 0},
                  mouth:{w:26, cup:2, h:2} },
-    sad:       { eyeL: {cx:-44, cy:102,w:28, h:11, up:-4, dn:5,  tilt: 6},
-                 eyeR: {cx: 44, cy:102,w:28, h:11, up:-4, dn:5,  tilt:-6},
+    sad:       { eyeL: {cx:-44, cy:152,w:28, h:11, up:-4, dn:5,  tilt: 6},
+                 eyeR: {cx: 44, cy:152,w:28, h:11, up:-4, dn:5,  tilt:-6},
                  mouth:{w:34, cup:-11, h:4} },
-    angry:     { eyeL: {cx:-45, cy:104,w:24, h:10, up:-2, dn:7,  tilt: 9},
-                 eyeR: {cx: 45, cy:104,w:24, h:10, up:-2, dn:7,  tilt:-9},
+    angry:     { eyeL: {cx:-45, cy:154,w:24, h:10, up:-2, dn:7,  tilt: 9},
+                 eyeR: {cx: 45, cy:154,w:24, h:10, up:-2, dn:7,  tilt:-9},
                  mouth:{w:34, cup:-8, h:3} }
   };
 
@@ -76,8 +76,8 @@
   var lite = false;
   var speaking = false;
   var cur = {
-    eL: {cx:-46, cy:96, w:34, h:20, up:17, dn:-1, tilt:-2},
-    eR: {cx: 46, cy:96, w:34, h:20, up:17, dn:-1, tilt: 2},
+    eL: {cx:-46, cy:146, w:34, h:20, up:17, dn:-1, tilt:-2},
+    eR: {cx: 46, cy:146, w:34, h:20, up:17, dn:-1, tilt: 2},
     m:  {w:46, cup:13, h:5}
   };
 
@@ -125,9 +125,9 @@
      from this centre, so they must be added to it, not used as-is. */
   var FACE_CX = 200;
 
-  /* Mouth sits on a fixed baseline below the eyes (viewBox 400x300,
-     eyes ~y96-133, mouth baseline at y176 keeps it clear of them). */
-  var MOUTH_Y = 176;
+  /* Mouth sits on a fixed baseline below the eyes (viewBox 400x400,
+     eyes ~y146-183, mouth baseline at y226 keeps it clear of them). */
+  var MOUTH_Y = 226;
 
   function mouthPath(m) {
     var pts = [

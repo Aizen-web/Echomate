@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QUrl, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMainWindow
 
 from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -88,7 +88,7 @@ def _route_line(text: str):
     tl = text.lower()
     if tl.startswith("you:"):
         return "you", text.split(":", 1)[1].strip()
-    if tl.startswith("calcifer:"):
+    if tl.startswith(("ecomate:", "calcifer:")):
         return "ai", text.split(":", 1)[1].strip()
     if tl.startswith("file:"):
         return "sys", text
@@ -149,6 +149,7 @@ class Bridge(QObject):
     onLite       = pyqtSignal(bool)
     onToast      = pyqtSignal(str, str)
     onOpenSettings = pyqtSignal()
+    onSensors    = pyqtSignal(str)
 
     def __init__(self, win: "MainWindow"):
         super().__init__()
@@ -210,6 +211,18 @@ class Bridge(QObject):
     def setLite(self, lite: bool):
         self._win._set_lite(lite)
 
+    @pyqtSlot()
+    def refreshSensors(self):
+        self._win._poll_sensors()
+
+    @pyqtSlot(str)
+    def triggerAnimation(self, payload_json: str):
+        self._win._trigger_animation(payload_json)
+
+    @pyqtSlot(str)
+    def setDeviceUrl(self, url: str):
+        self._win._set_device_url(url)
+
     @pyqtSlot(str, str, str)
     def setupDone(self, gemini: str, or_key: str, os_name: str):
         self._win._on_setup_done(gemini, or_key, os_name)
@@ -225,9 +238,15 @@ class MainWindow(QMainWindow):
 
     def __init__(self, face_path: str):
         super().__init__()
-        self.setWindowTitle("Calcifer")
+        self.setWindowTitle("EcoMate")
+        icon_path = BASE_DIR / "ecomate.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
+
+        # Start in fullscreen mode
+        self.showFullScreen()
 
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(
@@ -240,6 +259,8 @@ class MainWindow(QMainWindow):
         self._current_file: str | None = None
         self._last_state = "INITIALISING"
         self._last_emotion = "happy"
+        self._last_sensor_data: dict | None = None
+        self._sensor_url = ""
 
         self._web = _WebView(self)
         self.setCentralWidget(self._web)
@@ -248,7 +269,7 @@ class MainWindow(QMainWindow):
         st = self._web.settings()
         st.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         st.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        st.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
+        st.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
 
         self._channel = QWebChannel(self._web.page())
         self._bridge = Bridge(self)
@@ -271,6 +292,17 @@ class MainWindow(QMainWindow):
         # settings
         self._lite = False
         self._load_settings()
+        
+        # ESP32 connection retry tracking
+        self._esp32_retry_count = 0
+        self._esp32_max_retries = 3
+        self._esp32_connection_aborted = False
+
+        # Sensor polling every 3 seconds for real-time updates
+        # Polls ESP32 automatically to show live sensor readings
+        self._sensor_timer = QTimer(self)
+        self._sensor_timer.timeout.connect(self._poll_sensors)
+        self._sensor_timer.start(3000)  # Poll every 3 seconds
 
         # shortcuts (kept native: global hotkeys for mute/fullscreen)
         QShortcut(QKeySequence("F4"), self).activated.connect(self._toggle_mute)
@@ -399,6 +431,215 @@ class MainWindow(QMainWindow):
         self._push_convs()
         self._push_messages()
         self._poll_tasks()
+        self._poll_sensors()
+
+    # ----------------------------------------------------------- sensors
+    @staticmethod
+    def _normalise_sensor_payload(payload: dict, is_live: bool, source: str) -> dict:
+        """Accept both the current flat firmware response and the documented
+        nested response.  The browser receives one stable, presentation-only
+        contract regardless of which compatible firmware is installed.
+        """
+        soil = payload.get("soil") if isinstance(payload.get("soil"), dict) else {}
+        rain = payload.get("rain") if isinstance(payload.get("rain"), dict) else {}
+        device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
+
+        soil_percent = soil.get("percent", payload.get("soil_percent"))
+        soil_raw = soil.get("raw", payload.get("soil_raw"))
+        leak_detected = rain.get("detected", payload.get("raindrop_wet"))
+        leak_raw = rain.get("raw", payload.get("raindrop_raw"))
+
+        try:
+            soil_percent = max(0, min(100, int(soil_percent)))
+        except (TypeError, ValueError):
+            soil_percent = None
+
+        return {
+            "soil_percent": soil_percent,
+            "soil_raw": soil_raw,
+            "soil_status": soil.get("status") or (
+                "Needs attention" if soil_percent is not None and (soil_percent < 25 or soil_percent > 90)
+                else "Healthy" if soil_percent is not None and soil_percent >= 60
+                else "Monitoring"
+            ),
+            "leak_detected": bool(leak_detected),
+            "leak_raw": leak_raw,
+            "leak_status": rain.get("severity") or ("Leak detected" if leak_detected else "Dry / safe"),
+            "animation": device.get("animation") or payload.get("animation", "idle"),
+            "is_live": is_live,
+            "source": source,
+            "updated_at": int(time.time()),
+        }
+
+    def _device_base_url(self) -> str:
+        value = (self._sensor_url or "").strip()
+        if not value:
+            return ""
+        if value.startswith(("http://", "https://")):
+            return value.rstrip("/")
+        return ("http://" + value).rstrip("/")
+
+    def _sensor_url_from_settings(self) -> str:
+        base = self._device_base_url()
+        if not base:
+            return ""
+        return base + "/api/sensors"
+
+    def _trigger_animation(self, payload_json: str) -> None:
+        try:
+            data = json.loads(payload_json) if payload_json else {}
+        except json.JSONDecodeError:
+            data = {"animation": payload_json}
+
+        animation = str(data.get("animation", "")).strip()
+        if not animation:
+            self._bridge.onToast.emit("No animation selected", "error")
+            return
+
+        base = self._device_base_url()
+        if not base:
+            self._bridge.onToast.emit("Add your ESP32 address in Settings first", "error")
+            return
+
+        body: dict = {
+            "animation": animation,
+            "lock_seconds": int(data.get("lock_seconds") or 60),
+        }
+        task = str(data.get("task") or "").strip()
+        if task:
+            body["task"] = task
+        duration = data.get("duration")
+        if duration:
+            body["duration"] = int(duration)
+
+        try:
+            import requests
+
+            response = requests.post(
+                f"{base}/api/animation",
+                json=body,
+                timeout=3,
+            )
+            response.raise_for_status()
+            result = response.json()
+            name = result.get("animation", animation)
+            self._append_log(f"SYS: Animation triggered on robot → {name}")
+            self._bridge.onToast.emit(f"Playing “{name}” on Tabbie", "success")
+            self._esp32_retry_count = 0
+            self._esp32_connection_aborted = False
+            self._poll_sensors()
+        except Exception as exc:
+            self._append_log(f"SYS: Animation request failed ({exc})")
+            self._bridge.onToast.emit(f"Could not reach ESP32: {exc}", "error")
+
+    def _emit_sensors(self):
+        if self._last_sensor_data:
+            self._bridge.onSensors.emit(json.dumps(self._last_sensor_data))
+        else:
+            self._bridge.onSensors.emit(json.dumps({
+                "is_live": False, "configured": bool(self._sensor_url),
+                "source": self._sensor_url, "updated_at": int(time.time()),
+            }))
+
+    def _poll_sensors(self):
+        url = self._sensor_url_from_settings()
+        if not url:
+            self._emit_sensors()
+            return
+        
+        # If connection was aborted after 3 failed attempts, don't retry
+        if self._esp32_connection_aborted:
+            self._emit_sensors()
+            return
+        
+        prev_leak_state = None
+        if self._last_sensor_data:
+            prev_leak_state = self._last_sensor_data.get("leak_detected", False)
+        
+        try:
+            import requests
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Sensor response must be a JSON object")
+            
+            # Connection successful - reset retry counter
+            self._esp32_retry_count = 0
+            self._last_sensor_data = self._normalise_sensor_payload(payload, True, url)
+            
+            # Check if leak just started (transition from False/None to True)
+            current_leak = self._last_sensor_data.get("leak_detected", False)
+            if current_leak and not prev_leak_state:
+                # Leak just detected! Auto-respond with AI
+                self._handle_leak_alert()
+                
+        except Exception as e:
+            # Connection failed - increment retry counter
+            self._esp32_retry_count += 1
+            
+            if self._esp32_retry_count >= self._esp32_max_retries:
+                # Abort after 3 failed attempts
+                self._esp32_connection_aborted = True
+                print(f"[ESP32] ❌ Connection aborted after {self._esp32_max_retries} failed attempts")
+                self._append_log(f"SYS: ESP32 connection failed after {self._esp32_max_retries} attempts. Running without sensor data.")
+            
+            if self._last_sensor_data:
+                self._last_sensor_data = dict(self._last_sensor_data)
+                self._last_sensor_data["is_live"] = False
+                self._last_sensor_data["updated_at"] = int(time.time())
+            else:
+                self._last_sensor_data = {
+                    "is_live": False, "configured": True, "source": url,
+                    "updated_at": int(time.time()),
+                }
+        self._emit_sensors()
+    
+    def _handle_leak_alert(self):
+        """Auto-respond when leak is detected"""
+        alert_msg = "[EMERGENCY] Water leak detected by sensor! The system needs immediate attention."
+        self._append_log(f"SYSTEM ALERT: {alert_msg}")
+        if self.on_text_command:
+            threading.Thread(target=self.on_text_command, args=(alert_msg,), daemon=True).start()
+
+    def _set_device_url(self, url: str):
+        cleaned = url.strip().rstrip("/")
+        if cleaned != self._sensor_url:
+            self._sensor_url = cleaned
+            self._last_sensor_data = None
+            # Reset connection retry state when URL changes
+            self._esp32_retry_count = 0
+            self._esp32_connection_aborted = False
+            self._save_settings()
+        self._poll_sensors()
+
+    def sensor_context(self) -> str:
+        """A compact, current context injected into every text turn."""
+        # Force a fresh poll to get the absolute latest data before generating context
+        if self._sensor_url_from_settings():
+            import requests
+            try:
+                url = self._sensor_url_from_settings()
+                response = requests.get(url, timeout=1.5)
+                if response.ok:
+                    payload = response.json()
+                    if isinstance(payload, dict):
+                        self._last_sensor_data = self._normalise_sensor_payload(payload, True, url)
+            except Exception:
+                pass  # Use cached data if fetch fails
+        
+        data = self._last_sensor_data
+        if not data:
+            return "EcoMate sensor status: no ESP32 reading has been received yet."
+        if not data.get("is_live"):
+            return "EcoMate sensor status: the last reading is stale because the ESP32 is offline or not configured."
+        soil = data.get("soil_percent")
+        soil_text = f"{soil}%" if soil is not None else "unknown"
+        return (
+            f"EcoMate live sensor status: soil moisture {soil_text} ({data.get('soil_status', 'monitoring')}); "
+            f"leak sensor: {data.get('leak_status', 'unknown')}; "
+            f"device animation: {data.get('animation', 'idle')}."
+        )
 
     # ---------------------------------------------------------------- chat
     def _send(self, txt: str):
@@ -411,7 +652,7 @@ class MainWindow(QMainWindow):
 
     def _attach_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for Calcifer", str(Path.home()),
+            self, "Select a file for EcoMate", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -521,6 +762,7 @@ class MainWindow(QMainWindow):
             if SETTINGS_FILE.exists():
                 data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
                 self._lite = bool(data.get("lite", False))
+                self._sensor_url = str(data.get("esp32_url", "")).strip()
         except Exception:
             self._lite = False
 
@@ -528,7 +770,7 @@ class MainWindow(QMainWindow):
         try:
             CONFIG_DIR.mkdir(exist_ok=True)
             SETTINGS_FILE.write_text(
-                json.dumps({"lite": self._lite}, indent=2), encoding="utf-8")
+                json.dumps({"lite": self._lite, "esp32_url": self._sensor_url}, indent=2), encoding="utf-8")
         except Exception:
             pass
 
@@ -573,7 +815,7 @@ class MainWindow(QMainWindow):
         self._ready = True
         self._bridge.onSetup.emit(False)
         self._apply_state("LISTENING")
-        self._append_log("SYS: Initialised. OS=%s. Calcifer online." % os_name.upper())
+        self._append_log("SYS: Initialised. OS=%s. EcoMate online." % os_name.upper())
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +870,9 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def sensor_context(self) -> str:
+        return self._win.sensor_context()
 
     def wait_for_api_key(self):
         while not self._win._ready:

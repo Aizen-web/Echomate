@@ -1,3 +1,54 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Secrets, API Keys & Credentials
 api_keys.json
-conversations.json
+config/api_keys.json
+.env
+.env.*
+*.env
+
+# Local Configurations & Session State
 settings.json
+config/settings.json
+conversations.json
+config/conversations.json
+memory/long_term.json
+
+# Local Databases & Cache
+.freebuff/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Test & Debug Artifacts
+ui_test_render.png
+*.log
+logs/
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+desktop.ini

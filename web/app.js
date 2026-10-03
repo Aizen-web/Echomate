@@ -1,575 +1,388 @@
-/* =====================================================================
-   Calcifer web frontend — bridge + UI logic.
-
-   Talks to the Python backend exclusively through the QWebChannel
-   "bridge" object:  Python -> JS via signals (onState, onEmotion, ...),
-   JS -> Python via methods (sendText, toggleMute, setupDone, ...).
-   ===================================================================== */
+/* EcoMate's browser layer is deliberately presentation-only.  All device
+   polling and Gemini work remains in Python behind the QWebChannel bridge. */
 (function () {
   "use strict";
-
   var $ = function (id) { return document.getElementById(id); };
-
-  var root = document.documentElement;
   var bridge = null;
+  var sensorData = null;
+  var messages = [];
+  
+  // Notification state tracking
+  var notificationsEnabled = false;
+  var lastNotifiedSoilDry = false;
+  var lastNotifiedSoilWet = false;
+  var lastNotifiedLeak = false;
 
-  /* ------------------------------------------------------------ state */
-  var STATE_TEXT = {
-    INITIALISING: ["Initialising…", "#8f8b84"],
-    LISTENING:    ["Listening…", "#5BE3A6"],
-    THINKING:     ["Thinking…", "#FFB020"],
-    PROCESSING:   ["Processing…", "#FFB020"],
-    SPEAKING:     ["Speaking…", "#FFB020"],
-    MUTED:        ["Muted", "#FF4B5C"]
-  };
-  var STATE_FACE = {
-    INITIALISING: "idle",
-    MUTED:        "idle",
-    LISTENING:    "listening",
-    THINKING:     "thinking",
-    PROCESSING:   "thinking",
-    SPEAKING:     "speaking"
-  };
-
-  var EMOTION_COLORS = {
-    happy: "#FFB020", proud: "#FFB020", playful: "#FFB020",
-    love: "#FF8FB3",
-    excited: "#FF5E6E", surprised: "#FF5E6E",
-    thinking: "#8B7CFF", curious: "#8B7CFF", focused: "#8B7CFF",
-    calm: "#4FC6E8", sleepy: "#4FC6E8", sad: "#4FC6E8",
-    angry: "#FF4B5C", annoyed: "#FF4B5C", error: "#FF4B5C"
-  };
-
-  function parseHex(hex) {
-    var h = hex.replace("#", "");
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    var n = parseInt(h, 16);
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  }
-  function mix(hex, target, amt) {
-    var a = parseHex(hex), b = target;
-    var r = Math.round(a[0] + (b[0] - a[0]) * amt);
-    var g = Math.round(a[1] + (b[1] - a[1]) * amt);
-    var bl = Math.round(a[2] + (b[2] - a[2]) * amt);
-    return "rgb(" + r + "," + g + "," + bl + ")";
-  }
-  function lighten(hex, amt) { return mix(hex, [255, 255, 255], amt); }
-
-  function setEmotion(emotion) {
-    var hex = EMOTION_COLORS[emotion] || "#FFB020";
-    root.style.setProperty("--glow-color", hex);
-    root.style.setProperty("--face-color", hex);
-    root.style.setProperty("--feature-color", lighten(hex, 0.5));
-    if (window.CalciferFace) CalciferFace.setEmotion(emotion);
-  }
-
-  function setState(state) {
-    var entry = STATE_TEXT[state] || [state + "…", "#c3c0b9"];
-    $("status-line").textContent = entry[0];
-    $("status-line").style.color = entry[1];
-    $("state-led").style.color = entry[1];
-    if (window.CalciferFace) CalciferFace.setState(STATE_FACE[state] || "idle");
-  }
-
-  function setMuted(m) {
-    var btn = $("mute-pill");
-    var icon = $("mute-icon");
-    btn.classList.toggle("muted", !!m);
-    btn.title = m ? "Unmute" : "Mute";
-    if (icon) icon.textContent = m ? "mic_off" : "mic";
-    if (window.CalciferFace) CalciferFace.setMuted(m);
-  }
-
-  function setLite(l) {
-    document.body.classList.toggle("lite", l);
-    $("lite-toggle").checked = l;
-    if (window.CalciferFace) CalciferFace.setLite(l);
-  }
-
-  /* ------------------------------------------------------------ clocks */
-  function tickClock() {
-    var now = new Date();
-    function pad(n) { return n < 10 ? "0" + n : "" + n; }
-    var hms = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
-    var hm = pad(now.getHours()) + ":" + pad(now.getMinutes());
-    $("stage-clock").textContent = hms;
-    $("sb-clock").textContent = hm;
-  }
-
-  /* -------------------------------------------------------------- chat */
-  var nearBottom = true;
-  var msgEl = $("chat-messages");
-  var chatScroll = $("chat-scroll");
-
-  function scrollToBottom() {
-    chatScroll.scrollTop = chatScroll.scrollHeight;
-  }
-  chatScroll.addEventListener("scroll", function () {
-    nearBottom = (chatScroll.scrollHeight - chatScroll.scrollTop - chatScroll.clientHeight) < 60;
-  });
-
-  function renderMessages(messages) {
-    msgEl.innerHTML = "";
-    $("chat-empty").style.display = (messages && messages.length) ? "none" : "";
-    for (var i = 0; i < messages.length; i++) {
-      appendBubble(messages[i].role, messages[i].text, messages[i].time, false);
-    }
-    nearBottom = true;
-    scrollToBottom();
-  }
-
-  function appendBubble(role, text, time, autoscroll) {
-    $("chat-empty").style.display = "none";
-    var el;
-    if (role === "sys") {
-      el = document.createElement("div");
-      el.className = "sys-line";
-      el.textContent = text;
-    } else {
-      var bubble = document.createElement("div");
-      bubble.className = "bubble bubble-" + (role === "err" ? "err" : (role === "you" ? "you" : "ai"));
-      var txt = document.createElement("div");
-      txt.className = "bubble-text";
-      txt.textContent = text;
-      bubble.appendChild(txt);
-      if (time) {
-        var t = document.createElement("span");
-        t.className = "bubble-time";
-        t.textContent = time;
-        bubble.appendChild(t);
-      }
-      el = bubble;
-    }
-    msgEl.appendChild(el);
-    while (msgEl.children.length > 200) msgEl.removeChild(msgEl.firstChild);
-    if (autoscroll !== false && nearBottom) scrollToBottom();
-  }
-
-  /* ------------------------------------------------------------ sidebar */
-  function renderConvs(data) {
-    var list = $("sb-convs");
-    list.innerHTML = "";
-    (data.convs || []).forEach(function (c) {
-      var row = document.createElement("div");
-      row.className = "conv-row" + (c.id === data.active ? " active" : "");
-      row.dataset.id = c.id;
-
-      var main = document.createElement("div");
-      main.className = "conv-main";
-      var title = document.createElement("div");
-      title.className = "conv-title";
-      title.textContent = c.title;
-      title.dataset.kind = "title";
-      var meta = document.createElement("div");
-      meta.className = "conv-meta";
-      meta.textContent = c.meta;
-      main.appendChild(title);
-      main.appendChild(meta);
-
-      var del = document.createElement("button");
-      del.className = "conv-del";
-      del.textContent = "×";
-      del.addEventListener("click", function (e) {
-        e.stopPropagation();
-        bridge.deleteConv(c.id);
-      });
-
-      row.appendChild(main);
-      row.appendChild(del);
-
-      row.addEventListener("click", function () { bridge.selectConv(c.id); });
-      row.addEventListener("dblclick", function () { startRename(row, c.id); });
-      row.addEventListener("contextmenu", function (e) {
-        e.preventDefault();
-        showConvMenu(c.id, e);
-      });
-      list.appendChild(row);
-    });
-  }
-
-  function startRename(row, cid) {
-    var titleEl = row.querySelector(".conv-title");
-    var old = titleEl.textContent;
-    var input = document.createElement("input");
-    input.className = "chat-input";
-    input.style.height = "20px";
-    input.style.borderRadius = "6px";
-    input.value = old;
-    titleEl.replaceWith(input);
-    input.focus();
-    input.select();
-    var done = function (commit) {
-      var v = input.value.trim();
-      if (commit && v && v !== old) bridge.renameConv(cid, v);
-      input.replaceWith(titleEl);
-    };
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") done(true);
-      else if (e.key === "Escape") done(false);
-    });
-    input.addEventListener("blur", function () { done(true); });
-  }
-
-  function showConvMenu(cid, e) {
-    var overlay = document.createElement("div");
-    overlay.className = "overlay";
-    overlay.style.background = "transparent";
-    overlay.style.backdropFilter = "none";
-    var box = document.createElement("div");
-    box.className = "glass-raised";
-    box.style.position = "fixed";
-    box.style.padding = "6px";
-    box.style.minWidth = "140px";
-    var mk = function (label, fn) {
-      var b = document.createElement("button");
-      b.className = "palette-item";
-      b.style.width = "100%";
-      b.textContent = label;
-      b.addEventListener("click", function () { overlay.remove(); fn(); });
-      box.appendChild(b);
-    };
-    mk("Rename", function () {
-      var row = document.querySelector('.conv-row[data-id="' + cid + '"]');
-      if (row) startRename(row, cid);
-    });
-    mk("Delete", function () { bridge.deleteConv(cid); });
-    overlay.addEventListener("click", function () { overlay.remove(); });
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    box.style.left = Math.min(e.clientX, window.innerWidth - 160) + "px";
-    box.style.top = e.clientY + "px";
-  }
-
-  function renderTasks(tasks) {
-    var running = tasks.filter(function (t) { return t.status === "running"; }).length;
-    var label = "Tasks";
-    if (running) label = "Tasks (" + running + " running)";
-    else if (tasks.length) label = "Tasks (" + tasks.length + ")";
-    var labelEl = $("sb-tasks").querySelector(".nav-label");
-    if (labelEl) labelEl.textContent = label;
-
-    var panel = $("sb-tasks-panel");
-    if (panel.classList.contains("hidden")) return;
-    var colors = {
-      pending: "#8f8b84", running: "#FFB020",
-      completed: "#5BE3A6", failed: "#FF4B5C", cancelled: "#8f8b84"
-    };
-    panel.innerHTML = "";
-    if (!tasks.length) {
-      var e = document.createElement("div");
-      e.className = "task-empty";
-      e.textContent = "No background tasks yet.";
-      panel.appendChild(e);
-      return;
-    }
-    var shown = tasks.slice(-6).reverse();
-    shown.forEach(function (t) {
-      var row = document.createElement("div");
-      row.className = "task-row";
-      row.style.color = colors[t.status] || "#8f8b84";
-      var goal = t.goal || "";
-      if (goal.length > 34) goal = goal.slice(0, 33) + "…";
-      row.textContent = "● " + goal;
-      panel.appendChild(row);
-    });
-  }
-
-  /* ------------------------------------------------------------- toasts */
-  function showToast(text, color) {
-    var box = $("toasts");
-    var t = document.createElement("div");
-    t.className = "toast";
-    t.textContent = text;
-    t.style.color = color;
-    box.appendChild(t);
-    setTimeout(function () {
-      t.classList.add("dismissing");
-      setTimeout(function () { t.remove(); }, 320);
-    }, 3200);
-  }
-
-  /* ----------------------------------------------------------- palette */
-  var COMMANDS = [
-    ["Open an application", "Open {arg}", "Type an app name, e.g. Chrome", null],
-    ["Search the web", "Search the web for {arg}", "Type a search query", null],
-    ["Check the weather", "Check the weather in {arg}", "Type a city name", null],
-    ["Set a reminder", "Set a reminder: {arg}", "Describe the reminder", null],
-    ["Play a YouTube video", "Play the YouTube video {arg}", "Type a video title", null],
-    ["Send a message", "Send a message to {arg}", "Type a contact name", null],
-    ["Take a screenshot", "Take a screenshot and analyze it", null, null],
-    ["Manage files", "Help me manage files: {arg}", "Describe the file task", null],
-    ["New chat", null, null, "new_chat"],
-    ["Mute / unmute mic", null, null, "toggle_mute"],
-    ["Open settings", null, null, "settings"]
+  var ROBOT_ANIMATIONS = [
+    { id: "startup", name: "Startup", icon: "power_settings_new", oled: "startup01 bitmap loop", servo: "Left → right → center once", trigger: "Power-on (or replay from here)", lock: 25 },
+    { id: "idle", name: "Idle", icon: "self_improvement", oled: "idle01 loop", servo: "Nod every 4th loop", trigger: "Default rest; soil 25–60%", lock: 45 },
+    { id: "focus", name: "Focus", icon: "center_focus_strong", oled: "focus01 loop", servo: "Nudge at 50% of timer", trigger: "Pomodoro / study timer", task: "Focus session", duration: 120, lock: 120 },
+    { id: "break", name: "Break", icon: "coffee", oled: "relax01 loop", servo: "Every loop: L → R → center", trigger: "Break timer / API alias relax", lock: 45 },
+    { id: "love", name: "Love", icon: "favorite", oled: "love01 once", servo: "Celebration wiggle", trigger: "Task done; soil ≥ 60%", lock: 45 },
+    { id: "paused", name: "Paused / Angry", icon: "mood_bad", oled: "angry static face", servo: "Shake every 30s", trigger: "Dry/wet soil, leak, timer paused", lock: 45 },
+    { id: "pomodoro", name: "Pomodoro HUD", icon: "timer", oled: "Text focus screen + bar", servo: "Quick L → R → center", trigger: "Legacy pomodoro display mode", task: "Pomodoro", lock: 60 },
+    { id: "complete", name: "Complete", icon: "celebration", oled: "Text “Great job!”", servo: "Wiggle then idle", trigger: "Task finished in dashboard", task: "Task complete!", lock: 30 }
   ];
 
-  var paletteSel = 0;
-  var paletteArg = false;
-  var palettePending = "";
+  var STATE = {
+    INITIALISING: ["Waking up…", "#a18b8d", "idle"], LISTENING: ["Listening", "#4cd98a", "listening"],
+    THINKING: ["Thinking", "#e0a64c", "thinking"], PROCESSING: ["Checking that", "#e0a64c", "thinking"],
+    SPEAKING: ["Speaking", "#df7c8c", "speaking"], MUTED: ["Voice muted", "#e05c5c", "idle"]
+  };
+  var EMOTION = { happy:"#df7c8c", proud:"#df7c8c", playful:"#df7c8c", love:"#ff8fb3", excited:"#e8768b", surprised:"#e8768b", thinking:"#b19cff", curious:"#b19cff", focused:"#b19cff", calm:"#8ed9d0", sleepy:"#8ed9d0", sad:"#8ed9d0", angry:"#e05c5c", annoyed:"#e05c5c", error:"#e05c5c" };
+  function setState(state) { var v = STATE[state] || [state, "#a18b8d", "idle"]; $("status-line").textContent = v[0]; $("status-line").style.color = v[1]; $("state-led").style.background = v[1]; if (window.CalciferFace) window.CalciferFace.setState(v[2]); }
+  function setEmotion(emotion) { var color = EMOTION[emotion] || EMOTION.happy; document.documentElement.style.setProperty("--face-color", color); document.documentElement.style.setProperty("--face-light", mix(color, 0.42)); if (window.CalciferFace) window.CalciferFace.setEmotion(emotion); }
+  function mix(hex, amount) { var n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return "rgb(" + Math.round(r + (255 - r) * amount) + "," + Math.round(g + (255 - g) * amount) + "," + Math.round(b + (255 - b) * amount) + ")"; }
+  function setMuted(muted) { $("mute-icon").textContent = muted ? "mic_off" : "mic"; }
+  function setLite(lite) { document.body.classList.toggle("lite", lite); $("lite-toggle").checked = lite; if (window.CalciferFace) window.CalciferFace.setLite(lite); }
 
-  function paletteOpen() {
-    $("palette").classList.remove("hidden");
-    paletteArg = false;
-    $("palette-input").value = "";
-    $("palette-input").placeholder = "What do you want Calcifer to do?";
-    $("palette-hint").textContent = "Esc to close";
-    paletteRender();
-    $("palette-input").focus();
-  }
-  function paletteClose() { $("palette").classList.add("hidden"); }
-  function paletteToggle() {
-    if ($("palette").classList.contains("hidden")) paletteOpen();
-    else paletteClose();
-  }
-
-  function paletteRender() {
-    var q = $("palette-input").value.trim().toLowerCase();
-    var list = $("palette-list");
-    list.innerHTML = "";
-    var visible = [];
-    COMMANDS.forEach(function (c, i) {
-      if (paletteArg) return;
-      if (q && c[0].toLowerCase().indexOf(q) === -1) return;
-      visible.push(i);
-      var el = document.createElement("div");
-      el.className = "palette-item";
-      el.textContent = c[0];
-      el.dataset.index = i;
-      el.addEventListener("click", function () { paletteRun(i); });
-      el.addEventListener("mousemove", function () { paletteSel = i; paletteMark(); });
-      list.appendChild(el);
+  // === THEME SWITCHER ===
+  function setTheme(theme) {
+    document.body.setAttribute("data-theme", theme);
+    document.querySelectorAll(".theme-btn").forEach(function(btn) {
+      btn.classList.toggle("active", btn.dataset.theme === theme);
     });
-    paletteSel = visible.length ? 0 : -1;
-    paletteMark();
-  }
-  function paletteMark() {
-    var items = $("palette-list").querySelectorAll(".palette-item");
-    for (var i = 0; i < items.length; i++) {
-      items[i].classList.toggle("sel", i === paletteSel);
-    }
-  }
-  function paletteRun(index) {
-    var c = COMMANDS[index];
-    if (!c) return;
-    if (c[3]) {
-      bridge.paletteAction(c[3]);
-      paletteClose();
-      return;
-    }
-    if (c[1] && c[1].indexOf("{arg}") !== -1) {
-      paletteArg = true;
-      palettePending = c[1];
-      $("palette-input").value = "";
-      $("palette-input").placeholder = c[2] || "Type a value…";
-      $("palette-hint").textContent = "Enter to run · Esc to cancel";
-      $("palette-list").innerHTML = "";
-      $("palette-input").focus();
-      return;
-    }
-    bridge.sendCommand(c[1]);
-    paletteClose();
-  }
-  function paletteCommit() {
-    if (paletteArg) {
-      var arg = $("palette-input").value.trim();
-      if (!arg) return;
-      bridge.sendCommand(palettePending.replace("{arg}", arg));
-      paletteClose();
-      return;
-    }
-    var items = $("palette-list").querySelectorAll(".palette-item");
-    if (paletteSel >= 0 && items[paletteSel]) {
-      paletteRun(parseInt(items[paletteSel].dataset.index, 10));
-    }
+    try {
+      localStorage.setItem("ecomate-color-theme", theme);
+    } catch (_) {}
   }
 
-  /* -------------------------------------------------------- setup modal */
-  var selOs = "linux";
-  function setupShow() {
-    $("setup").classList.remove("hidden");
-    var row = $("os-row");
-    row.innerHTML = "";
-    [["windows", "Windows"], ["mac", "macOS"], ["linux", "Linux"]].forEach(function (o) {
-      var b = document.createElement("button");
-      b.className = "os-btn";
-      b.textContent = o[1];
-      b.addEventListener("click", function () { selOs = o[0]; paintOs(); });
-      row.appendChild(b);
-    });
-    paintOs();
-    $("setup-gemini").value = "";
-    $("setup-or").value = "";
-  }
-  function paintOs() {
-    var btns = $("os-row").querySelectorAll(".os-btn");
-    var colors = { windows: "#FFB020", mac: "#5BE3A6", linux: "#5BE3A6" };
-    for (var i = 0; i < btns.length; i++) {
-      var keys = ["windows", "mac", "linux"];
-      var sel = keys[i] === selOs;
-      btns[i].classList.toggle("sel", sel);
-      if (sel) {
-        btns[i].style.background = colors[keys[i]];
-        btns[i].style.color = "#141006";
-      } else {
-        btns[i].style.background = "rgba(255,255,255,0.05)";
-        btns[i].style.color = "#c3c0b9";
+  function loadTheme() {
+    try {
+      var savedTheme = localStorage.getItem("ecomate-color-theme");
+      if (savedTheme) {
+        setTheme(savedTheme);
       }
+    } catch (_) {}
+  }
+
+  // === NOTIFICATION SYSTEM ===
+  function requestNotificationPermission() {
+    if (!("Notification" in window)) {
+      console.warn("Browser doesn't support notifications");
+      return Promise.resolve(false);
+    }
+    if (Notification.permission === "granted") {
+      notificationsEnabled = true;
+      return Promise.resolve(true);
+    }
+    if (Notification.permission !== "denied") {
+      return Notification.requestPermission().then(function(permission) {
+        notificationsEnabled = (permission === "granted");
+        return notificationsEnabled;
+      });
+    }
+    return Promise.resolve(false);
+  }
+
+  function showNotification(title, body, tag) {
+    if (!notificationsEnabled) return;
+    var notification = new Notification(title, {
+      body: body,
+      icon: "ecomate.ico",
+      tag: tag || "ecomate-alert",
+      requireInteraction: true,
+      silent: false
+    });
+    notification.onclick = function() {
+      window.focus();
+      notification.close();
+    };
+  }
+
+  function checkAndNotify(data) {
+    if (!notificationsEnabled || !data.is_live) return;
+    
+    var soil = data.soil_percent;
+    var leak = data.leak_detected;
+    
+    // Soil too dry (<30%)
+    if (soil !== null && soil !== undefined && soil < 30 && !lastNotifiedSoilDry) {
+      showNotification(
+        "🌱 Soil Too Dry!",
+        "Soil moisture is at " + soil + "%. Your plant needs water! Consider watering now to prevent stress.",
+        "soil-dry"
+      );
+      lastNotifiedSoilDry = true;
+      lastNotifiedSoilWet = false;
+    } else if (soil >= 30) {
+      lastNotifiedSoilDry = false;
+    }
+    
+    // Soil overwatered (>75%)
+    if (soil !== null && soil !== undefined && soil > 75 && !lastNotifiedSoilWet) {
+      showNotification(
+        "💧 Soil Overwatered!",
+        "Soil moisture is at " + soil + "%. Too much water can harm roots. Hold off on watering for now.",
+        "soil-wet"
+      );
+      lastNotifiedSoilWet = true;
+      lastNotifiedSoilDry = false;
+    } else if (soil <= 75) {
+      lastNotifiedSoilWet = false;
+    }
+    
+    // Water leak detected
+    if (leak && !lastNotifiedLeak) {
+      showNotification(
+        "🚨 Water Leak Detected!",
+        "A water leak has been detected! Please check your sensors and investigate immediately to prevent water waste.",
+        "water-leak"
+      );
+      lastNotifiedLeak = true;
+    } else if (!leak && lastNotifiedLeak) {
+      showNotification(
+        "✅ Leak Resolved",
+        "The water leak has been cleared. Your system is secure.",
+        "leak-cleared"
+      );
+      lastNotifiedLeak = false;
     }
   }
-  function setupSubmit() {
-    var g = $("setup-gemini").value.trim();
-    var o = $("setup-or").value.trim();
-    var ok = true;
-    if (!g) { $("setup-gemini").classList.add("error"); ok = false; }
-    else $("setup-gemini").classList.remove("error");
-    if (!o) { $("setup-or").classList.add("error"); ok = false; }
-    else $("setup-or").classList.remove("error");
-    if (ok) bridge.setupDone(g, o, selOs);
-  }
 
-  /* -------------------------------------------------------- settings modal */
-  function settingsShow() {
-    var box = $("palette-swatches");
-    box.innerHTML = "";
-    [
-      ["Happy · Proud · Playful", "#FFB020"],
-      ["Excited · Surprised", "#FF5E6E"],
-      ["Thinking · Curious · Focused", "#8B7CFF"],
-      ["Calm · Sleepy · Sad", "#4FC6E8"],
-      ["Angry · Annoyed · Error", "#FF4B5C"],
-      ["Love", "#FF8FB3"]
-    ].forEach(function (s) {
-      var row = document.createElement("div");
-      row.className = "swatch-row";
-      var sw = document.createElement("div");
-      sw.className = "swatch";
-      sw.style.background = "radial-gradient(circle at 35% 30%, " + lighten(s[1], 0.35) + ", " + s[1] + ")";
-      var lbl = document.createElement("span");
-      lbl.textContent = s[0];
-      row.appendChild(sw);
-      row.appendChild(lbl);
-      box.appendChild(row);
+  function timeGreeting() { var hour = new Date().getHours(), greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"; $("time-greeting").textContent = greeting.toUpperCase(); }
+  function statusClass(el, state) { el.className = "card-state " + state; }
+  function renderSensors(data) {
+    var prevData = sensorData;
+    var newData = data || {};
+    
+    // Create fingerprint to detect actual changes
+    var prevFingerprint = prevData ? JSON.stringify({
+      soil: prevData.soil_percent,
+      leak: prevData.leak_detected,
+      live: prevData.is_live,
+      status: prevData.soil_status,
+      leak_status: prevData.leak_status,
+      configured: prevData.configured || !!prevData.source
+    }) : null;
+    
+    var newFingerprint = JSON.stringify({
+      soil: newData.soil_percent,
+      leak: newData.leak_detected,
+      live: newData.is_live,
+      status: newData.soil_status,
+      leak_status: newData.leak_status,
+      configured: newData.configured || !!newData.source
     });
-    $("settings").classList.remove("hidden");
-  }
-
-  /* --------------------------------------------------------- chat collapse */
-  var chatCollapsed = false;
-  function setChatCollapsed(c) {
-    chatCollapsed = c;
-    $("chat").classList.toggle("collapsed", c);
-    var icon = $("chat-collapse").querySelector(".material-symbols-outlined");
-    if (icon) icon.textContent = c ? "chevron_left" : "chevron_right";
-  }
-  function onResize() {
-    if (window.innerWidth < 860 && !chatCollapsed) setChatCollapsed(true);
-  }
-
-  /* -------------------------------------------------------- file chip */
-  function setFile(data) {
-    if (!data) {
-      $("file-chip").classList.add("hidden");
+    
+    // If nothing changed, skip entire render
+    if (prevFingerprint === newFingerprint) {
       return;
     }
-    $("chip-label").textContent = "File: " + data.name + "  ·  " + data.size;
-    $("file-chip").classList.remove("hidden");
+    
+    sensorData = newData;
+    var live = !!newData.is_live, configured = !!newData.configured || !!newData.source, soil = newData.soil_percent;
+    var leak = !!newData.leak_detected, soilState = soil === null || soil === undefined ? "" : (soil < 25 || soil > 90 ? "warning" : "good");
+    
+    // RED SCREEN DANGER MODE when leak detected
+    if (!prevData || prevData.leak_detected !== leak) {
+      document.body.classList.toggle("danger-mode", leak);
+    }
+    
+    // Only update if values actually changed
+    if (!prevData || prevData.soil_percent !== soil) {
+      $("soil-value").textContent = soil === null || soil === undefined ? "—" : soil + "%";
+      $("soil-trend").textContent = soilState === "good" ? "HEALTHY" : soilState === "warning" ? "CHECK" : "WAITING"; 
+      statusClass($("soil-trend"), soilState);
+    }
+    
+    if (!prevData || prevData.soil_status !== newData.soil_status || prevData.configured !== configured) {
+      $("soil-detail").textContent = newData.soil_status || (configured ? "Connecting to ESP32…" : "Add your ESP32 address in Settings");
+    }
+    
+    if (!prevData || prevData.leak_detected !== leak) {
+      $("leak-value").textContent = newData.leak_detected === undefined ? "—" : (leak ? "Water found" : "Dry");
+      $("leak-trend").textContent = leak ? "ALERT" : newData.leak_detected === undefined ? "WAITING" : "SAFE"; 
+      statusClass($("leak-trend"), leak ? "danger" : newData.leak_detected === undefined ? "" : "good");
+    }
+    
+    if (!prevData || prevData.leak_status !== newData.leak_status || prevData.configured !== configured) {
+      $("leak-detail").textContent = newData.leak_status || (configured ? "Waiting for leak sensor" : "No ESP32 configured");
+    }
+    
+    if (!prevData || prevData.is_live !== live || prevData.configured !== configured) {
+      $("device-value").textContent = live ? "Live" : configured ? "Offline / stale" : "Not connected";
+      $("device-detail").textContent = live ? "Last update just now" : configured ? "Last known values are preserved" : "Configure the local device address";
+      $("device-trend").textContent = live ? "ONLINE" : "OFFLINE"; 
+      statusClass($("device-trend"), live ? "good" : "");
+      $("connection-label").textContent = live ? "EcoMate online" : "EcoMate"; 
+      $("connection-detail").textContent = live ? "ESP32 sensor link active" : configured ? "ESP32 unavailable" : "Set up your ESP32";
+    }
+    
+    var dot = document.querySelector(".profile-row .presence-dot"); 
+    if (dot && (!prevData || prevData.leak_detected !== leak || prevData.is_live !== live)) {
+      dot.classList.toggle("online", live); 
+      dot.classList.toggle("alert", leak);
+    }
+    
+    if (!prevData || prevData.leak_detected !== leak || prevData.soil_percent !== soil || prevData.is_live !== live) {
+      var summary = !configured ? "Connect EcoMate to your ESP32 to see live soil and leak readings." : !live ? "Your ESP32 is unavailable, so EcoMate is showing the last known sensor status." : leak ? "Water was detected — check the leak sensor or nearby pipe." : soilState === "warning" ? "Your plant needs attention. EcoMate has noticed an unusual soil reading." : "Everything looks calm. Your plant and water monitor are doing well.";
+      $("sensor-summary").textContent = summary; 
+      $("greeting").textContent = leak ? "I spotted some water." : soilState === "warning" ? "Your plant needs a little care." : live ? "Your eco lab is feeling good." : "Your eco lab is waiting.";
+    }
+    
+    // Check for notifications
+    checkAndNotify(newData);
+    
+    // Only update detail view if anything changed
+    if (!prevData || prevData.soil_percent !== soil || prevData.leak_detected !== leak || prevData.is_live !== live || prevData.animation !== newData.animation) {
+      renderSensorDetail();
+      updateAnimationsStatus();
+    }
+  }
+  function renderSensorDetail() { var d = sensorData || {}, host = d.source || "Not configured", cards = [["Soil moisture", d.soil_percent === undefined || d.soil_percent === null ? "—" : d.soil_percent + "%", d.soil_status || "No reading received yet."], ["Leak detector", d.leak_detected === undefined ? "—" : d.leak_detected ? "Alert" : "Dry / safe", d.leak_status || "No reading received yet."], ["Connection", d.is_live ? "Live" : "Offline", d.is_live ? "Polling " + host : host === "Not configured" ? "Open settings to add the ESP32 IP address." : "The last known sensor values remain visible while reconnecting."], ["Device expression", d.animation || "idle", "The physical OLED chooses its ambient face from the current sensor condition."]]; var root = $("sensor-detail-cards"); root.innerHTML = ""; cards.forEach(function (c) { var el = document.createElement("article"); el.className = "sensor-detail-card"; el.innerHTML = "<h3></h3><strong></strong><p></p>"; el.children[0].textContent = c[0]; el.children[1].textContent = c[1]; el.children[2].textContent = c[2]; root.appendChild(el); }); }
+
+  function makeBubble(message) { var el = document.createElement("div"); if (message.role === "sys") { el.className = "sys-line"; el.textContent = message.text; return el; } el.className = "bubble " + (message.role === "you" ? "you" : message.role === "err" ? "err" : "ai"); var text = document.createElement("div"); text.textContent = message.text; el.appendChild(text); if (message.time) { var time = document.createElement("span"); time.className = "bubble-time"; time.textContent = message.time; el.appendChild(time); } return el; }
+  function renderMessages(next) { messages = next || []; var root = $("chat-messages"), history = $("history-messages"); root.innerHTML = ""; history.innerHTML = ""; $("chat-empty").classList.toggle("hidden", messages.length > 0); messages.forEach(function (m) { root.appendChild(makeBubble(m)); history.appendChild(makeBubble(m)); }); $("chat-scroll").scrollTop = $("chat-scroll").scrollHeight; }
+  function renderConversations(data) { var root = $("conversation-list"); root.innerHTML = ""; (data.convs || []).forEach(function (c) { var row = document.createElement("div"); row.className = "conversation-row" + (c.id === data.active ? " active" : ""); var main = document.createElement("div"); main.className = "conversation-main"; var title = document.createElement("div"); title.className = "conversation-title"; title.textContent = c.title; var meta = document.createElement("div"); meta.className = "conversation-meta"; meta.textContent = c.meta; main.appendChild(title); main.appendChild(meta); row.appendChild(main); var remove = document.createElement("button"); remove.className = "conversation-delete"; remove.textContent = "×"; remove.title = "Delete"; remove.addEventListener("click", function (e) { e.stopPropagation(); bridge.deleteConv(c.id); }); row.appendChild(remove); row.addEventListener("click", function () { bridge.selectConv(c.id); }); row.addEventListener("dblclick", function () { var name = window.prompt("Conversation name", c.title); if (name && name.trim()) bridge.renameConv(c.id, name.trim()); }); root.appendChild(row); }); }
+  function setFile(json) { var data = json ? JSON.parse(json) : null; $("file-chip").classList.toggle("hidden", !data); if (data) $("file-label").textContent = data.name + (data.size ? " · " + data.size : ""); }
+  function showToast(message, kind) {
+    var el = $("toast");
+    if (!el) return;
+    el.textContent = message;
+    el.className = "toast toast-" + (kind || "info");
+    el.classList.remove("hidden");
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(function () { el.classList.add("hidden"); }, 4200);
   }
 
-  /* -------------------------------------------------------- bridge wiring */
-  function initBridge(channel) {
-    bridge = channel.objects.bridge;
-    if (!bridge) return;
-    window.bridge = bridge;
+  function renderAnimationGallery() {
+    var grid = $("animation-grid");
+    var tbody = $("animation-reference-body");
+    if (!grid || !tbody) return;
+    grid.innerHTML = "";
+    tbody.innerHTML = "";
+    ROBOT_ANIMATIONS.forEach(function (anim) {
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "animation-card";
+      card.setAttribute("role", "listitem");
+      card.innerHTML = "<span class=\"material-symbols-outlined\">" + anim.icon + "</span><strong></strong><small></small>";
+      card.children[1].textContent = anim.name;
+      card.children[2].textContent = anim.trigger;
+      card.addEventListener("click", function () {
+        if (!bridge) return;
+        bridge.triggerAnimation(JSON.stringify({
+          animation: anim.id,
+          task: anim.task || "",
+          duration: anim.duration || 0,
+          lock_seconds: anim.lock || 60
+        }));
+      });
+      grid.appendChild(card);
 
-    bridge.onState.connect(function (s) { setState(s); });
-    bridge.onEmotion.connect(function (e) { setEmotion(e); });
-    bridge.onMuted.connect(function (m) { setMuted(m); });
-    bridge.onFile.connect(function (json) { setFile(json ? JSON.parse(json) : null); });
-    bridge.onTasks.connect(function (json) { renderTasks(JSON.parse(json)); });
-    bridge.onConvs.connect(function (json) { renderConvs(JSON.parse(json)); });
-    bridge.onMessages.connect(function (json) { renderMessages(JSON.parse(json)); });
-    bridge.onSetup.connect(function (needed) {
-      if (needed) setupShow(); else $("setup").classList.add("hidden");
+      var row = document.createElement("tr");
+      row.innerHTML = "<td><code></code></td><td></td><td></td><td></td>";
+      row.children[0].children[0].textContent = anim.id;
+      row.children[1].textContent = anim.oled;
+      row.children[2].textContent = anim.servo;
+      row.children[3].textContent = anim.trigger;
+      tbody.appendChild(row);
     });
-    bridge.onLite.connect(function (l) { setLite(l); });
-    bridge.onToast.connect(function (text, color) { showToast(text, color); });
-    bridge.onOpenSettings.connect(function () { settingsShow(); });
-    bridge.onReady.connect(function () { });
-
-    /* start interaction */
-    document.getElementById("sb-new").addEventListener("click", function () { bridge.newChat(); });
-    document.getElementById("sb-settings").addEventListener("click", function () { bridge.openSettings(); });
-    document.getElementById("sb-collapse").addEventListener("click", function () {
-      document.body.classList.toggle("side-collapsed");
-    });
-    document.getElementById("sb-tasks").addEventListener("click", function () {
-      $("sb-tasks-panel").classList.toggle("hidden");
-    });
-
-    document.getElementById("chat-collapse").addEventListener("click", function () {
-      setChatCollapsed(!chatCollapsed);
-    });
-    document.getElementById("attach-btn").addEventListener("click", function () { bridge.attachFile(); });
-    document.getElementById("chip-clear").addEventListener("click", function () { bridge.clearFile(); });
-
-    var input = document.getElementById("chat-input");
-    var send = document.getElementById("send-btn");
-    function syncSend() {
-      send.disabled = !input.value.trim();
-    }
-    input.addEventListener("input", syncSend);
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { sendMessage(); }
-    });
-    send.addEventListener("click", sendMessage);
-    function sendMessage() {
-      var txt = input.value.trim();
-      if (!txt) return;
-      input.value = "";
-      syncSend();
-      bridge.sendText(txt);
-    }
-
-    document.getElementById("mute-pill").addEventListener("click", function () { bridge.toggleMute(); });
-    document.getElementById("palette-input").addEventListener("input", paletteRender);
-    document.getElementById("palette-input").addEventListener("keydown", function (e) {
-      if (e.key === "Enter") paletteCommit();
-      else if (e.key === "ArrowDown") { paletteSel = (paletteSel + 1) % Math.max(1, $("palette-list").childElementCount); paletteMark(); }
-      else if (e.key === "ArrowUp") { paletteSel = (paletteSel - 1 + Math.max(1, $("palette-list").childElementCount)) % Math.max(1, $("palette-list").childElementCount); paletteMark(); }
-    });
-
-    document.getElementById("lite-toggle").addEventListener("change", function (e) {
-      bridge.setLite(e.target.checked);
-    });
-    document.getElementById("settings-done").addEventListener("click", function () {
-      $("settings").classList.add("hidden");
-    });
-    document.getElementById("setup-submit").addEventListener("click", setupSubmit);
-
-    document.addEventListener("keydown", function (e) {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "k") {
-        e.preventDefault();
-        paletteToggle();
-      }
-      if (e.key === "Escape") {
-        if (!$("palette").classList.contains("hidden")) paletteClose();
-        else if (!$("settings").classList.contains("hidden")) $("settings").classList.add("hidden");
-      }
-    });
-
-    window.addEventListener("resize", onResize);
-    onResize();
-
-    tickClock();
-    setInterval(tickClock, 1000);
-
-    /* notify Python that the JS side is listening */
-    bridge.ready();
+    updateAnimationsStatus();
   }
 
-  window.addEventListener("DOMContentLoaded", function () {
-    if (window.QWebChannel && window.qt && window.qt.webChannelTransport) {
-      new QWebChannel(window.qt.webChannelTransport, initBridge);
+  function updateAnimationsStatus() {
+    var el = $("animations-status");
+    if (!el) return;
+    var configured = sensorData && (sensorData.configured || sensorData.source);
+    var live = sensorData && sensorData.is_live;
+    var anim = sensorData && sensorData.animation ? sensorData.animation : "—";
+    if (!configured) {
+      el.textContent = "Add your ESP32 IP in Settings to control the physical OLED.";
+    } else if (live) {
+      el.textContent = "ESP32 online — current face: " + anim + ". Click a card to play on the robot.";
+    } else {
+      el.textContent = "ESP32 offline — clicks will retry the animation API. Last face: " + anim + ".";
     }
-  });
+  }
+
+  function switchView(view) {
+    document.querySelectorAll(".nav-item").forEach(function (el) { el.classList.toggle("active", el.dataset.view === view); });
+    document.querySelectorAll(".view").forEach(function (el) { el.classList.toggle("hidden", el.id !== view + "-view"); });
+    var kicker = "ENVIRONMENTAL COMPANION";
+    if (view === "history") kicker = "CONVERSATION HISTORY";
+    else if (view === "sensors") kicker = "LIVE SENSOR STATUS";
+    else if (view === "animations") kicker = "ROBOT ANIMATIONS";
+    $("view-kicker").textContent = kicker;
+    if (view === "animations") renderAnimationGallery();
+  }
+  function openSettings() { $("settings-modal").classList.remove("hidden"); $("device-url").value = sensorData && sensorData.source ? sensorData.source.replace(/\/api\/sensors$/, "") : ""; }
+  function closeSettings() { $("settings-modal").classList.add("hidden"); }
+  function toggleTheme() { var light = document.body.classList.toggle("theme-light"); document.body.classList.toggle("theme-dark", !light); $("theme-icon").textContent = light ? "dark_mode" : "light_mode"; try { localStorage.setItem("ecomate-theme", light ? "light" : "dark"); } catch (_) {} }
+
+  function bindEvents() {
+    $("new-chat").addEventListener("click", function () { bridge.newChat(); switchView("home"); }); 
+    $("refresh-sensors").addEventListener("click", function () { bridge.refreshSensors(); }); 
+    $("theme-toggle").addEventListener("click", toggleTheme); 
+    $("settings-button").addEventListener("click", openSettings); 
+    $("settings-button-top").addEventListener("click", openSettings); 
+    document.querySelectorAll("[data-close-modal]").forEach(function (button) { button.addEventListener("click", closeSettings); }); 
+    document.querySelectorAll(".nav-item").forEach(function (button) { button.addEventListener("click", function () { switchView(button.dataset.view); }); }); 
+    $("mute-button").addEventListener("click", function () { bridge.toggleMute(); }); 
+    $("attach-button").addEventListener("click", function () { bridge.attachFile(); }); 
+    $("file-clear").addEventListener("click", function () { bridge.clearFile(); });
+    
+    // Theme switcher buttons
+    document.querySelectorAll(".theme-btn").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        setTheme(btn.dataset.theme);
+      });
+    });
+    
+    var startBtn = $("start-button"); 
+    if (startBtn) { 
+      startBtn.addEventListener("click", function () { 
+        if ($("mute-icon").textContent === "mic_off") { 
+          bridge.toggleMute(); 
+        } 
+        setState("LISTENING"); 
+        setEmotion("excited"); 
+        // Request notification permission when starting
+        requestNotificationPermission();
+        bridge.sendText("Hello EcoMate! Ready to begin."); 
+      }); 
+    }
+    
+    $("save-settings").addEventListener("click", function () { bridge.setLite($("lite-toggle").checked); bridge.setDeviceUrl($("device-url").value.trim()); closeSettings(); }); 
+    $("lite-toggle").addEventListener("change", function () { bridge.setLite(this.checked); });
+    
+    var input = $("chat-input"), send = $("send-button"); 
+    function sync() { send.disabled = !input.value.trim(); } 
+    function sendText() { var text = input.value.trim(); if (!text) return; bridge.sendText(text); input.value = ""; sync(); } 
+    input.addEventListener("input", sync); 
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } }); 
+    send.addEventListener("click", sendText);
+    
+    var selectedOs = "linux"; 
+    $("os-row").addEventListener("click", function (e) { var button = e.target.closest("button[data-os]"); if (!button) return; selectedOs = button.dataset.os; $("os-row").querySelectorAll("button").forEach(function (b) { b.classList.toggle("selected", b === button); }); }); 
+    $("setup-submit").addEventListener("click", function () { var gemini = $("setup-gemini").value.trim(), openRouter = $("setup-openrouter").value.trim(); if (!gemini || !openRouter) return; bridge.setupDone(gemini, openRouter, selectedOs); });
+  }
+  
+  function init(channel) { 
+    bridge = channel.objects.bridge; 
+    if (!bridge) return; 
+    bridge.onState.connect(setState); 
+    bridge.onEmotion.connect(setEmotion); 
+    bridge.onMuted.connect(setMuted); 
+    bridge.onSensors.connect(function (json) { renderSensors(JSON.parse(json)); }); 
+    bridge.onMessages.connect(function (json) { renderMessages(JSON.parse(json)); }); 
+    bridge.onConvs.connect(function (json) { renderConversations(JSON.parse(json)); }); 
+    bridge.onFile.connect(setFile); 
+    bridge.onLite.connect(setLite); 
+    bridge.onSetup.connect(function (needed) { $("setup-modal").classList.toggle("hidden", !needed); }); 
+    bridge.onToast.connect(function (message, kind) { showToast(message, kind); });
+    bindEvents(); 
+    renderAnimationGallery();
+    timeGreeting(); 
+    loadTheme(); // Load saved theme on startup
+    try { if (localStorage.getItem("ecomate-theme") === "light") toggleTheme(); } catch (_) {} 
+    
+    // Request notification permission on startup
+    requestNotificationPermission();
+    
+    bridge.ready(); 
+  }
+  
+  window.addEventListener("DOMContentLoaded", function () { if (window.QWebChannel && window.qt && window.qt.webChannelTransport) new QWebChannel(window.qt.webChannelTransport, init); });
 })();

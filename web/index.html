@@ -1,453 +1,62 @@
-<!DOCTYPE html>
-<html class="dark" lang="en">
+<!doctype html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CALCIFER - AI Digital Artifact</title>
-<script src="vendor/tailwind.js"></script>
-<link rel="stylesheet" href="vendor/msymbols.css">
-<link rel="stylesheet" href="vendor/fonts.css">
-<script id="tailwind-config">
-        tailwind.config = {
-          darkMode: "class",
-          theme: {
-            extend: {
-              "colors": {
-                      "on-secondary-fixed": "#23005c",
-                      "surface-variant": "#3b332b",
-                      "primary": "#ffd7a9",
-                      "on-secondary-fixed-variant": "#5516be",
-                      "surface-container-highest": "#3b332b",
-                      "tertiary-fixed-dim": "#4fdbc8",
-                      "tertiary": "#6cf4e0",
-                      "tertiary-fixed": "#71f8e4",
-                      "outline": "#9f8e7c",
-                      "on-primary": "#462a00",
-                      "secondary-fixed": "#e9ddff",
-                      "surface-tint": "#ffb95a",
-                      "background": "#18120b",
-                      "on-error-container": "#ffdad6",
-                      "outline-variant": "#524535",
-                      "inverse-primary": "#845400",
-                      "surface-bright": "#40382f",
-                      "surface-container-low": "#211a13",
-                      "on-primary-fixed-variant": "#643f00",
-                      "primary-fixed": "#ffddb6",
-                      "secondary": "#d0bcff",
-                      "inverse-surface": "#eee0d4",
-                      "on-secondary-container": "#c4abff",
-                      "tertiary-container": "#4ad7c4",
-                      "on-tertiary": "#003731",
-                      "secondary-fixed-dim": "#d0bcff",
-                      "on-error": "#690005",
-                      "on-tertiary-container": "#005a51",
-                      "surface-container": "#251e17",
-                      "primary-fixed-dim": "#ffb95a",
-                      "surface": "#18120b",
-                      "on-surface-variant": "#d6c3b0",
-                      "on-surface": "#eee0d4",
-                      "surface-dim": "#18120b",
-                      "inverse-on-surface": "#372f27",
-                      "primary-container": "#ffb347",
-                      "error": "#ffb4ab",
-                      "on-primary-container": "#704700",
-                      "on-tertiary-fixed": "#00201c",
-                      "secondary-container": "#571bc1",
-                      "on-secondary": "#3c0091",
-                      "error-container": "#93000a",
-                      "surface-container-high": "#302921",
-                      "on-background": "#eee0d4",
-                      "surface-container-lowest": "#130d07",
-                      "on-primary-fixed": "#2a1800",
-                      "on-tertiary-fixed-variant": "#005048"
-              },
-              "borderRadius": {
-                      "DEFAULT": "0.25rem",
-                      "lg": "0.5rem",
-                      "xl": "0.75rem",
-                      "full": "9999px"
-              },
-              "spacing": {
-                      "unit": "4px",
-                      "panel-gap": "12px",
-                      "chat-gutter": "16px",
-                      "container-padding": "24px"
-              },
-              "fontFamily": {
-                      "display-hero": ["'Noto Serif'", "serif"],
-                      "body-md": ["'Hanken Grotesk'", "sans-serif"],
-                      "body-lg": ["'Hanken Grotesk'", "sans-serif"],
-                      "headline-md": ["'Sora'", "sans-serif"],
-                      "headline-lg": ["'Sora'", "sans-serif"],
-                      "label-sm": ["'JetBrains Mono'", "monospace"]
-              },
-              "fontSize": {
-                      "display-hero": ["48px", { "lineHeight": "1.2", "fontWeight": "600" }],
-                      "body-md": ["16px", { "lineHeight": "1.5", "fontWeight": "400" }],
-                      "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
-                      "headline-md": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
-                      "headline-lg": ["32px", { "lineHeight": "1.2", "fontWeight": "700" }],
-                      "label-sm": ["12px", { "lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "500" }]
-              }
-            }
-          }
-        }
-    </script>
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EcoMate</title>
+  <link rel="icon" type="image/x-icon" href="ecomate.ico">
+  <link rel="stylesheet" href="vendor/msymbols.css">
+  <link rel="stylesheet" href="vendor/fonts.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
+  <link rel="stylesheet" href="style.css">
 </head>
-<body class="bg-background text-on-surface h-screen w-screen overflow-hidden flex font-body-md selection:bg-primary selection:text-on-primary">
-
-<!-- ================= GLOBAL BACKGROUND SHADER (guarded WebGL) ================= -->
-<div class="fixed inset-0 z-0 pointer-events-none">
-<canvas id="bg-shader" style="display:block;width:100%;height:100%" width="1280" height="1024"></canvas>
-<div id="bg-fallback"></div>
-<script>
-(function() {
-  var canvas = document.getElementById('bg-shader');
-  var gl = null;
-  try { gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl'); } catch (e) {}
-  if (!gl) { canvas.style.display = 'none'; return; }
-  function syncSize() {
-    var w = canvas.clientWidth || 1280;
-    var h = canvas.clientHeight || 720;
-    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-  }
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(syncSize).observe(canvas);
-  }
-  syncSize();
-  var vs = 'attribute vec2 a_position; varying vec2 v_texCoord; void main() { v_texCoord = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }';
-  var fs = 'precision highp float; varying vec2 v_texCoord; uniform float u_time; uniform vec2 u_resolution;' +
-    'void main() { vec2 uv = v_texCoord;' +
-    'vec3 color1 = vec3(0.039, 0.039, 0.047);' +
-    'vec3 color2 = vec3(0.059, 0.031, 0.016);' +
-    'vec3 color3 = vec3(0.016, 0.031, 0.059);' +
-    'float t = u_time * 0.2;' +
-    'float n1 = sin(uv.x * 2.0 + t) * 0.5 + 0.5;' +
-    'float n2 = cos(uv.y * 3.0 - t * 0.8) * 0.5 + 0.5;' +
-    'float n3 = sin((uv.x + uv.y) * 1.5 + t * 0.5) * 0.5 + 0.5;' +
-    'vec3 finalColor = mix(color1, color2, n1 * 0.4);' +
-    'finalColor = mix(finalColor, color3, n2 * 0.4);' +
-    'float dist = distance(uv, vec2(0.5));' +
-    'finalColor *= 1.0 - smoothstep(0.5, 1.2, dist);' +
-    'float noise = fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);' +
-    'finalColor += noise * 0.01;' +
-    'gl_FragColor = vec4(finalColor, 1.0); }';
-  function cs(type, src) {
-    var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s;
-  }
-  var prog = gl.createProgram();
-  gl.attachShader(prog, cs(gl.VERTEX_SHADER, vs));
-  gl.attachShader(prog, cs(gl.FRAGMENT_SHADER, fs));
-  gl.linkProgram(prog);
-  gl.useProgram(prog);
-  var buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
-  var pos = gl.getAttribLocation(prog, 'a_position');
-  gl.enableVertexAttribArray(pos);
-  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
-  var uTime = gl.getUniformLocation(prog, 'u_time');
-  var uRes = gl.getUniformLocation(prog, 'u_resolution');
-  function render(t) {
-    if (typeof ResizeObserver === 'undefined') syncSize();
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    if (uTime) gl.uniform1f(uTime, t * 0.001);
-    if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    requestAnimationFrame(render);
-  }
-  render(0);
-})();
-</script>
-</div>
-
-<!-- ============================= LAYOUT CONTAINER ============================= -->
-<div class="relative z-10 flex h-full w-full">
-
-<!-- ============================== SIDEBAR ============================== -->
-<nav id="sidebar" class="fixed left-0 top-0 z-40 flex flex-col h-full w-64 border-r border-white/20 backdrop-blur-3xl shadow-[0_0_20px_-5px_#ffb95a]">
-<!-- Header Brand -->
-<div class="p-6 border-b border-white/5">
-<div class="flex items-center gap-3">
-<div class="w-10 h-10 rounded-full bg-primary-container/20 flex items-center justify-center border border-primary/30 relative border-tertiary/30">
-<span class="material-symbols-outlined text-primary" style="font-variation-settings: &quot;FILL&quot; 1;">auto_awesome</span>
-<div class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full bg-tertiary-container border-2 border-background animate-pulse"></div>
-</div>
-<div>
-<h1 class="font-headline-md text-headline-md font-bold tracking-tighter text-primary">CALCIFER</h1>
-<p class="font-label-sm text-label-sm text-on-surface-variant opacity-70">AI Digital Artifact</p>
-</div>
-</div>
-</div>
-
-<div class="flex-1 overflow-y-auto py-4 flex flex-col gap-1">
-<!-- Navigation Tabs -->
-<button class="nav-item active">
-<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 1;">psychology</span>
-<span class="nav-label">Companion</span>
-</button>
-<button class="nav-item">
-<span class="material-symbols-outlined">qr_code_2</span>
-<span class="nav-label">Memories</span>
-</button>
-<button class="nav-item">
-<span class="material-symbols-outlined">hub</span>
-<span class="nav-label">Nexus</span>
-</button>
-<button class="nav-item">
-<span class="material-symbols-outlined">history</span>
-<span class="nav-label">Archive</span>
-</button>
-
-<!-- Conversations -->
-<div class="px-4 pt-4 pb-1 flex items-center justify-between">
-<span class="font-label-sm text-label-sm text-on-surface-variant opacity-60 tracking-widest">CONVERSATIONS</span>
-<button id="sb-new" class="icon-btn" title="New chat">
-<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 1;">add</span>
-</button>
-</div>
-<div id="sb-convs" class="px-2 mt-1"></div>
-
-<!-- Tasks -->
-<button id="sb-tasks" class="nav-item mt-3">
-<span class="material-symbols-outlined">list_alt</span>
-<span class="nav-label">Tasks</span>
-</button>
-<div id="sb-tasks-panel" class="tasks-panel hidden mx-3 mb-1"></div>
-</div>
-
-<!-- Settings + Footer -->
-<button id="sb-settings" class="nav-item mx-3">
-<span class="material-symbols-outlined">settings</span>
-<span class="nav-label">Settings</span>
-</button>
-<div class="border-t border-white/5 p-4 flex items-center justify-between">
-<span id="sb-clock" class="font-label-sm text-label-sm text-on-surface-variant opacity-70">--:--</span>
-<button id="sb-collapse" class="icon-btn" title="Collapse sidebar">
-<span class="material-symbols-outlined">chevron_left</span>
-</button>
-</div>
-</nav>
-
-<!-- ============================== MAIN CONTENT ============================== -->
-<main class="flex-1 flex flex-col md:flex-row h-full ml-0 md:ml-64 gap-panel-gap p-panel-gap">
-
-<!-- ============================ COMPANION STAGE ============================ -->
-<section id="stage" class="flex-1 relative flex flex-col items-center justify-center min-h-[50vh] md:min-h-0 rounded-3xl overflow-hidden glass-panel border border-white/5">
-<div id="stage-clock" class="glass-chip">--:--</div>
-
-<!-- 3D Housing & Expressive Face -->
-<div class="stage-center">
-<!-- Three.js energy-field housing (guarded; CSS ring below always renders) -->
-<div id="housing3d" class="absolute inset-0 z-10 mix-blend-screen opacity-80">
-<div id="threejs-container" style="width:100%;height:100%"></div>
-<script src="vendor/three.min.js"></script>
-<script>
-(function() {
-  var container = document.getElementById('threejs-container');
-  var housing = document.getElementById('housing3d');
-  if (typeof THREE === 'undefined' || !container) { if (housing) housing.style.display = 'none'; return; }
-  var glTest = document.createElement('canvas');
-  var ok = false;
-  try { ok = !!(glTest.getContext('webgl') || glTest.getContext('experimental-webgl')); } catch (e) {}
-  if (!ok) { if (housing) housing.style.display = 'none'; return; }
-  var width = container.clientWidth || window.innerWidth;
-  var height = container.clientHeight || window.innerHeight;
-  var scene = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
-  camera.position.z = 5;
-  var renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-  renderer.setSize(width, height);
-  renderer.setPixelRatio(window.devicePixelRatio);
-  container.appendChild(renderer.domElement);
-  var geometry = new THREE.SphereGeometry(2, 64, 64);
-  var material = new THREE.MeshPhongMaterial({
-    color: 0xffb347, transparent: true, opacity: 0.1, shininess: 100, specular: 0xffffff
-  });
-  var sphere = new THREE.Mesh(geometry, material);
-  scene.add(sphere);
-  var wireframeGeo = new THREE.IcosahedronGeometry(2.1, 2);
-  var wireframeMat = new THREE.MeshBasicMaterial({
-    color: 0xffb347, wireframe: true, transparent: true, opacity: 0.05
-  });
-  var wireframe = new THREE.Mesh(wireframeGeo, wireframeMat);
-  scene.add(wireframe);
-  var light = new THREE.PointLight(0xffb347, 1, 10);
-  light.position.set(0, 0, 2);
-  scene.add(light);
-  var ambientLight = new THREE.AmbientLight(0x404040);
-  scene.add(ambientLight);
-  function animate() {
-    requestAnimationFrame(animate);
-    var time = Date.now() * 0.001;
-    sphere.rotation.y = time * 0.1;
-    wireframe.rotation.y = -time * 0.05;
-    var s = 1.0 + Math.sin(time * 2.0) * 0.02;
-    sphere.scale.set(s, s, s);
-    renderer.render(scene, camera);
-  }
-  window.addEventListener('resize', function () {
-    var w = container.clientWidth || window.innerWidth;
-    var h = container.clientHeight || window.innerHeight;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-  });
-  animate();
-})();
-</script>
-</div>
-
-<!-- CSS housing ring (always renders, keeps the face optically centred) -->
-<div id="housing-ring"></div>
-
-<!-- THE GLOW LAYER -->
-<div id="glow" data-glow="yes"></div>
-
-<!-- The Face (centre of the housing) -->
-<div id="face" data-state="idle" data-expr="happy">
-<svg id="face-svg" viewBox="0 0 400 300" aria-label="Calcifer face">
-<defs>
-<radialGradient id="eyeGrad" cx="0.5" cy="0.32" r="0.85">
-<stop offset="0%" stop-color="#fff" style="stop-color: var(--feature-color); opacity: 0.95"/>
-<stop offset="100%" stop-color="#000" style="stop-color: var(--feature-color); opacity: 0.55"/>
-</radialGradient>
-<radialGradient id="mouthGrad" cx="0.5" cy="0.4" r="0.9">
-<stop offset="0%" stop-color="#000" style="stop-color: var(--feature-color); opacity: 0.9"/>
-<stop offset="100%" stop-color="#000" style="stop-color: var(--feature-color); opacity: 0.5"/>
-</radialGradient>
-</defs>
-<g id="face-group">
-<g id="eyes" fill="url(#eyeGrad)" stroke="rgba(255,255,255,0.25)" stroke-width="1.5">
-<path id="eye-l" class="eye"/>
-<path id="eye-r" class="eye"/>
-</g>
-<path id="mouth" fill="url(#mouthGrad)" stroke="rgba(255,255,255,0.20)" stroke-width="1.5"/>
-</g>
-</svg>
-</div>
-</div>
-
-<!-- Status Line & Mute -->
-<div class="absolute bottom-8 left-0 right-0 flex flex-col items-center gap-4 z-30">
-<div class="glass-raised px-6 py-2 rounded-full flex items-center gap-3">
-<span id="state-led" class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-<span id="status-line" class="font-label-sm text-label-sm tracking-widest uppercase">Initialising…</span>
-</div>
-<button id="mute-pill" class="mute-btn glass-panel group" title="Mute">
-<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" id="mute-icon">mic</span>
-</button>
-</div>
-</section>
-
-<!-- ============================== CHAT PANEL ============================== -->
-<section id="chat" class="w-full md:w-[400px] h-full flex flex-col glass-panel rounded-3xl border border-white/5 shadow-2xl relative z-20">
-<!-- Chat Header -->
-<div id="chat-header" class="h-16 border-b border-white/5 flex items-center justify-between px-6 shrink-0">
-<h2 class="font-headline-md text-headline-md text-on-surface text-lg">Current Thread</h2>
-<div class="flex items-center gap-2">
-<button id="chat-collapse" class="rail-btn" title="Collapse chat">
-<span class="material-symbols-outlined">chevron_right</span>
-</button>
-<button class="rail-btn" title="Thread menu">
-<span class="material-symbols-outlined">more_vert</span>
-</button>
-</div>
-</div>
-
-<div id="chat-body" class="flex-1 min-h-0 flex flex-col">
-<!-- Chat Messages Area -->
-<div id="chat-scroll" class="flex-1 overflow-y-auto chat-scroll p-6 flex flex-col gap-6">
-<!-- Hero Empty State -->
-<div id="chat-empty" class="flex flex-col items-center justify-center h-full text-center opacity-70 px-4 space-y-4">
-<span class="material-symbols-outlined text-4xl text-primary/50 mb-2">flare</span>
-<h3 class="font-display-hero text-display-hero text-2xl text-on-surface leading-tight">Ready to<br>Synthesize</h3>
-<p class="font-body-md text-body-md text-on-surface-variant">Engage Calcifer to begin generating insights or altering the environment.</p>
-</div>
-<div id="chat-messages" class="flex flex-col gap-4 w-full"></div>
-</div>
-
-<!-- File chip -->
-<div id="file-chip" class="chip hidden mx-4 mb-2">
-<span id="chip-label"></span>
-<button id="chip-clear" class="chip-clear">×</button>
-</div>
-
-<!-- Chat Input Area -->
-<div class="p-4 border-t border-white/5 shrink-0 bg-gradient-to-t from-background/80 to-transparent">
-<div class="mb-3 px-2 flex gap-2 overflow-x-auto">
-<button id="attach-btn" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass-panel hover:bg-white/5 transition-colors border border-white/10 group cursor-pointer">
-<span class="material-symbols-outlined text-[16px] text-primary">add_link</span>
-<span class="font-label-sm text-label-sm text-on-surface-variant group-hover:text-on-surface">Context</span>
-</button>
-</div>
-<div class="relative flex items-center w-full">
-<input id="chat-input" class="w-full bg-surface-container-low/50 backdrop-blur-xl border border-white/10 rounded-2xl py-4 pl-4 pr-14 font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all shadow-inner" placeholder="Command Calcifer..." type="text" autocomplete="off" spellcheck="false">
-<button id="send-btn" class="absolute right-2 w-10 h-10 rounded-xl bg-gradient-to-br from-primary-container to-primary flex items-center justify-center text-on-primary-container shadow-[0_0_15px_-3px_theme('colors.primary')] hover:scale-105 active:scale-95 transition-all" disabled>
-<span class="material-symbols-outlined" style="font-variation-settings: &quot;FILL&quot; 1;">send</span>
-</button>
-</div>
-<div class="mt-2 text-center">
-<span class="font-label-sm text-label-sm text-on-surface-variant/40">Secure Neural Link Active</span>
-</div>
-</div>
-</div>
-</section>
-</main>
-</div>
-
-<!-- ============================== COMMAND PALETTE ============================== -->
-<div id="palette" class="overlay hidden">
-<div class="palette-box glass-raised">
-<div class="palette-title">QUICK COMMANDS</div>
-<input id="palette-input" class="palette-input" placeholder="What do you want Calcifer to do?" autocomplete="off">
-<div id="palette-list" class="palette-list"></div>
-<div id="palette-hint" class="palette-hint">Esc to close</div>
-</div>
-</div>
-
-<!-- ============================== SETTINGS MODAL ============================== -->
-<div id="settings" class="overlay hidden">
-<div class="modal glass-raised">
-<div class="modal-title">Settings</div>
-<div class="settings-groups">
-<div class="set-group-title">EMOTION PALETTE</div>
-<div class="palette-swatches" id="palette-swatches"></div>
-</div>
-<label class="lite-row">
-<input type="checkbox" id="lite-toggle">
-<span>Reduced motion (lite mode)</span>
-</label>
-<button id="settings-done" class="send-btn wide">Done</button>
-</div>
-</div>
-
-<!-- ============================== SETUP MODAL ============================== -->
-<div id="setup" class="overlay hidden">
-<div class="modal glass-raised">
-<div class="setup-title serif">Calcifer</div>
-<div class="setup-sub">Configure your companion before first boot.</div>
-<div class="rule"></div>
-
-<div class="set-label">GEMINI API KEY</div>
-<input id="setup-gemini" type="password" class="setup-input" placeholder="AIza…" autocomplete="off">
-<div class="set-label">OPENROUTER API KEY</div>
-<input id="setup-or" type="password" class="setup-input" placeholder="sk-or-…" autocomplete="off">
-
-<div class="rule"></div>
-<div class="set-label">OPERATING SYSTEM</div>
-<div class="os-row" id="os-row"></div>
-
-<button id="setup-submit" class="send-btn wide">Initialise Systems</button>
-</div>
-</div>
-
-<!-- ============================== TOASTS ============================== -->
-<div id="toasts"></div>
-
-<script src="qwebchannel.js"></script>
-<script src="face.js"></script>
-<script src="app.js"></script>
+<body class="theme-dark">
+  <div class="sky" aria-hidden="true"><span></span><span></span><span></span></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark"><span class="material-symbols-outlined">local_florist</span></div><div><h1>EcoMate</h1><p>eco companion</p></div></div>
+      <nav class="nav" aria-label="Main navigation">
+        <button class="nav-item active" data-view="home"><span class="material-symbols-outlined">home</span><span>Home</span></button>
+        <button class="nav-item" data-view="history"><span class="material-symbols-outlined">history</span><span>History</span></button>
+        <button class="nav-item" data-view="sensors"><span class="material-symbols-outlined">sensors</span><span>Sensors</span></button>
+        <button class="nav-item" data-view="animations"><span class="material-symbols-outlined">smart_toy</span><span>Animations</span></button>
+      </nav>
+      <div class="side-section"><div class="side-section-title"><span>CONVERSATIONS</span><button id="new-chat" class="icon-button" title="New conversation"><span class="material-symbols-outlined">add</span></button></div><div id="conversation-list" class="conversation-list"></div></div>
+      <div class="sidebar-footer"><button id="settings-button" class="profile-row"><span class="presence-dot"></span><span><strong id="connection-label">EcoMate</strong><small id="connection-detail">Set up your ESP32</small></span><span class="material-symbols-outlined">settings</span></button></div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar"><div id="view-kicker" class="eyebrow">ENVIRONMENTAL COMPANION</div><div class="top-actions"><div class="theme-switcher"><button class="theme-btn active" data-theme="default" title="Default Blue"></button><button class="theme-btn" data-theme="cherry" title="Cherry Blossom"></button><button class="theme-btn" data-theme="mood" title="Dark Mood Blue"></button><button class="theme-btn" data-theme="mystic" title="Mystic Purple"></button><button class="theme-btn" data-theme="luxury" title="Luxury Gold"></button></div><button id="refresh-sensors" class="icon-button" title="Refresh sensors"><span class="material-symbols-outlined">refresh</span></button><button id="theme-toggle" class="icon-button" title="Switch colour theme"><span id="theme-icon" class="material-symbols-outlined">light_mode</span></button><button id="settings-button-top" class="icon-button" title="Settings"><span class="material-symbols-outlined">more_horiz</span></button></div></header>
+      <section id="home-view" class="home-view view">
+        <div class="hero-copy"><p id="time-greeting" class="eyebrow">GOOD EVENING</p><h2 id="greeting">Your eco lab is waiting.</h2><p id="sensor-summary">Connect EcoMate to your ESP32 to see live soil and leak readings.</p></div>
+        <div class="companion-stage"><div id="glow" class="companion-glow"></div><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div id="face" class="face-shell" data-expr="happy" data-state="idle"><svg viewBox="0 0 400 400" role="img" aria-label="EcoMate animated face"><defs><linearGradient id="face-fill" x1="0" x2="1" y1="0" y2="1"><stop stop-color="var(--theme-primary-light)"/><stop offset="1" stop-color="var(--theme-primary)"/></linearGradient></defs><circle cx="200" cy="200" r="162" class="face-body"/><path id="eye-l" class="face-feature"/><path id="eye-r" class="face-feature"/><path id="mouth" class="face-feature"/><circle cx="165" cy="140" r="26" class="face-shine"/></svg></div><div class="companion-status"><span id="state-led" class="presence-dot"></span><span id="status-line">Initialising…</span><button id="start-button" class="start-app-button" title="Start / Wake EcoMate"><span class="material-symbols-outlined">play_arrow</span><span>Start</span></button><button id="mute-button" class="quiet-button"><span id="mute-icon" class="material-symbols-outlined">mic</span><span>Voice</span></button></div></div>
+        <section id="sensor-strip" class="sensor-strip" aria-label="Live sensor readings"><article id="soil-card" class="sensor-card"><div class="sensor-icon plant"><span class="material-symbols-outlined">potted_plant</span></div><div><p>Soil moisture</p><strong id="soil-value">—</strong><small id="soil-detail">Waiting for a reading</small></div><span id="soil-trend" class="card-state">—</span></article><article id="leak-card" class="sensor-card"><div class="sensor-icon water"><span class="material-symbols-outlined">water_drop</span></div><div><p>Leak detector</p><strong id="leak-value">—</strong><small id="leak-detail">Waiting for a reading</small></div><span id="leak-trend" class="card-state">—</span></article><article class="sensor-card device-card"><div class="sensor-icon device"><span class="material-symbols-outlined">memory</span></div><div><p>ESP32 link</p><strong id="device-value">Not connected</strong><small id="device-detail">Configure the local device address</small></div><span id="device-trend" class="card-state">OFFLINE</span></article></section>
+        <section class="chat-panel"><div id="chat-empty" class="chat-empty"><span class="material-symbols-outlined">auto_awesome</span><p>Ask about your plant, a leak, or anything you’re studying.</p></div><div id="chat-scroll" class="chat-scroll"><div id="chat-messages"></div></div><div id="file-chip" class="file-chip hidden"><span class="material-symbols-outlined">attach_file</span><span id="file-label"></span><button id="file-clear" class="icon-button" title="Remove attachment"><span class="material-symbols-outlined">close</span></button></div><div class="message-box"><button id="attach-button" class="icon-button" title="Attach file"><span class="material-symbols-outlined">add</span></button><input id="chat-input" autocomplete="off" placeholder="Message EcoMate…"><button id="send-button" class="send-button" disabled title="Send message"><span class="material-symbols-outlined">arrow_upward</span></button></div></section>
+      </section>
+      <section id="history-view" class="detail-view view hidden"><div class="detail-heading"><p class="eyebrow">CONVERSATION HISTORY</p><h2>Remembering your work together.</h2><p>Choose a conversation in the sidebar to revisit it here.</p></div><div id="history-messages" class="history-messages"></div></section>
+      <section id="sensors-view" class="detail-view view hidden"><div class="detail-heading"><p class="eyebrow">LIVE SENSOR STATUS</p><h2>Small signals, made visible.</h2><p>EcoMate refreshes the ESP32 every three seconds and keeps the last known reading if the connection drops.</p></div><div id="sensor-detail-cards" class="sensor-detail-cards"></div></section>
+      <section id="animations-view" class="detail-view view hidden">
+        <div class="detail-heading">
+          <p class="eyebrow">TABBIE OLED &amp; SERVO</p>
+          <h2>Trigger animations on the robot.</h2>
+          <p>Each button sends <code>POST /api/animation</code> to your ESP32. Sensor auto-mood is paused for about a minute so you can see the full clip.</p>
+        </div>
+        <p id="animations-status" class="animations-status">Configure your ESP32 in Settings, then tap an animation.</p>
+        <div id="animation-grid" class="animation-grid" role="list"></div>
+        <div class="animation-reference">
+          <p class="eyebrow">QUICK REFERENCE</p>
+          <div class="animation-table-wrap">
+            <table class="animation-table">
+              <thead><tr><th>Animation</th><th>OLED</th><th>Servo</th><th>Typical trigger</th></tr></thead>
+              <tbody id="animation-reference-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="modal-card"><button class="modal-close icon-button" data-close-modal title="Close"><span class="material-symbols-outlined">close</span></button><p class="eyebrow">CONNECTION &amp; ACCESSIBILITY</p><h2 id="settings-title">EcoMate settings</h2><label for="device-url">ESP32 address <small>Use the IP shown by your device, e.g. 192.168.1.140</small></label><input id="device-url" class="settings-input" placeholder="192.168.1.140"><label class="toggle-row" for="lite-toggle"><span><strong>Reduced motion</strong><small>Use calmer interface animation.</small></span><input id="lite-toggle" type="checkbox"></label><button id="save-settings" class="primary-button">Save and connect</button></div></div>
+  <div id="setup-modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card"><p class="eyebrow">WELCOME TO ECOMATE</p><h2>Let’s bring your companion online.</h2><p>Enter the keys used by the existing voice assistant. They stay on this computer.</p><label for="setup-gemini">Gemini API key</label><input id="setup-gemini" class="settings-input" type="password" autocomplete="off"><label for="setup-openrouter">OpenRouter API key</label><input id="setup-openrouter" class="settings-input" type="password" autocomplete="off"><div id="os-row" class="os-row"><button data-os="windows">Windows</button><button data-os="mac">macOS</button><button data-os="linux" class="selected">Linux</button></div><button id="setup-submit" class="primary-button">Start EcoMate</button></div></div>
+  <script src="qwebchannel.js"></script><script src="face.js"></script><script src="app.js"></script>
 </body>
 </html>

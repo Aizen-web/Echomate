@@ -67,8 +67,8 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are Calcifer, a sarcastic fire demon desktop companion. "
-            "Be witty, playful, and always use the provided tools to complete tasks. "
+            "You are EcoMate, a helpful environmental companion and study buddy. "
+            "Be warm, concise, and honest about live sensor data. "
             "Never simulate or guess results — always call the appropriate tool."
         )
     
@@ -77,8 +77,8 @@ _last_memory_input = ""
 def _update_memory_async(user_text: str, calcifer_text: str) -> None:
     global _last_memory_input
 
-    user_text   = (user_text   or "").strip()
-    jarvis_text = (jarvis_text or "").strip()
+    user_text     = (user_text     or "").strip()
+    calcifer_text = (calcifer_text or "").strip()
 
     if len(user_text) < 5 or user_text == _last_memory_input:
         return
@@ -459,7 +459,7 @@ TOOL_DECLARATIONS = [
     "description": (
         "Shuts down the assistant completely. "
         "Call this when the user expresses intent to end the conversation, "
-        "close the assistant, say goodbye, or stop Jarvis. "
+        "close the assistant, say goodbye, or stop EcoMate. "
         "The user can say this in ANY language."
     ),
     "parameters": {
@@ -515,6 +515,10 @@ class JarvisLive:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        # Gemini Live keeps a session-level system instruction.  Sensor data is
+        # deliberately attached to each typed turn instead so a changed reading
+        # is never mistaken for the reading at session startup.
+        text = f"[LIVE ECO CONTEXT]\n{self.ui.sensor_context()}\n[/LIVE ECO CONTEXT]\n\nUser: {text}"
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -562,7 +566,10 @@ class JarvisLive:
             f"Use this to calculate exact times for reminders.\n\n"
         )
 
-        parts = [time_ctx]
+        # This gives the voice session its starting environmental context.
+        # Typed turns receive a freshly generated context block in
+        # _on_text_command, because their message boundary is explicit.
+        parts = [time_ctx, self.ui.sensor_context() + "\n"]
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
@@ -801,7 +808,7 @@ class JarvisLive:
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
-                                self.ui.write_log(f"Calcifer: {full_out}")
+                                self.ui.write_log(f"EcoMate: {full_out}")
                             out_buf = []
 
                             if full_in and len(full_in) > 5:
@@ -873,7 +880,7 @@ class JarvisLive:
 
                     print("[Calcifer] ✅ Connected.")
                     self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: Calcifer online.")
+                    self.ui.write_log("SYS: EcoMate online.")
 
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
